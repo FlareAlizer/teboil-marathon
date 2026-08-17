@@ -1,0 +1,30 @@
+# Развёртывание на Render одним нажатием.
+#
+# Открыть: https://render.com/deploy?repo=https://github.com/FlareAlizer/teboil-marathon
+# Render прочитает этот файл, соберёт проект и выдаст постоянный адрес.
+#
+# ВАЖНО про диск. На бесплатном тарифе файловая система временная: база
+# `data/teboil.db` живёт до перезапуска или следующего деплоя. Для показа
+# заказчику этого достаточно, для самого мероприятия — нет: там сайт
+# поднимается на ноутбуке стенда, где база лежит на диске и никуда не девается.
+# Если понадобится постоянное хранилище на Render — подключается платный диск
+# и монтируется в /opt/render/project/src/data.
+
+services:
+  - type: web
+    name: teboil-marathon
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    envVars:
+      # Пароль оператора для входа в /admin.
+      # Render сгенерирует случайный — посмотреть можно в панели,
+      # вкладка Environment. Замените на свой, если нужен читаемый.
+      - key: ADMIN_PASSWORD
+        generateValue: true
+      - key: ADMIN_SESSION_SECRET
+        generateValue: true
+      - key: NODE_VERSION
+        value: 22.11.0
