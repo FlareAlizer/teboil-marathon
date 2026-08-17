@@ -1,0 +1,21 @@
+node_modules/
+.next/
+out/
+build/
+
+# Локальная база стенда и загруженные картинки
+data/
+public/uploads/*
+!public/uploads/.gitkeep
+
+.env
+.env.local
+.env*.local
+
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+next-env.d.ts
+tsconfig.tsbuildinfo
+.claude/
