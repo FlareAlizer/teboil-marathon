@@ -81,11 +81,18 @@ export function PhotoQuiz({
   }
 
   if (questions === null) {
+    // Выход есть и на загрузке: если сеть подвиснет, ответ не придёт никогда,
+    // и без кнопки участник останется на этом экране навсегда.
     return (
       <QuizScreen points={player.todayPoints}>
         <p className="mt-16 text-center text-kiosk-base font-medium text-white">
           Загружаем…
         </p>
+        <div className="mt-auto flex justify-center pt-10">
+          <QuizButton tone="pale" onClick={onExit}>
+            К станциям
+          </QuizButton>
+        </div>
       </QuizScreen>
     );
   }

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { QuizVariant } from '@/lib/types';
 import type { WheelSector } from './SpinWheel';
-import { QuizScreen } from './quiz-ui';
+import { QuizButton, QuizScreen } from './quiz-ui';
 import { QuizIntroScreen } from './QuizIntroScreen';
 import { WheelScreen } from './WheelScreen';
 import { ThemePickScreen } from './ThemePickScreen';
@@ -75,22 +75,21 @@ export function RouletteQuiz({
   const [points, setPoints] = useState(0);
   const [bonus, setBonus] = useState(0);
 
-  useEffect(() => {
-    let alive = true;
-    getQuiz(variant)
-      .then((data) => {
-        if (!alive) return;
-        setQuiz(data);
-        setPhase('intro');
-      })
-      .catch((e) => {
-        if (!alive) return;
-        setError(errorText(e));
-      });
-    return () => {
-      alive = false;
-    };
+  /** Вынесено из эффекта, чтобы этим же путём работала кнопка «Попробовать снова». */
+  const loadQuiz = useCallback(async () => {
+    setError(null);
+    try {
+      const data = await getQuiz(variant);
+      setQuiz(data);
+      setPhase('intro');
+    } catch (e) {
+      setError(errorText(e));
+    }
   }, [variant]);
+
+  useEffect(() => {
+    void loadQuiz();
+  }, [loadQuiz]);
 
   /** Ещё не заданные вопросы текущего уровня. */
   const available = useMemo(() => {
@@ -195,11 +194,30 @@ export function RouletteQuiz({
   const score = player.todayPoints;
 
   if (!quiz) {
+    // Из состояния ошибки обязательно должен быть выход. Киоск передают из рук
+    // в руки: без кнопки участник упирается в тупик и зовёт волонтёра, а тот
+    // может только перезагрузить страницу.
     return (
       <QuizScreen points={score}>
         <p className="mt-16 text-center text-kiosk-base font-medium text-white">
-          {error ?? 'Загружаем вопросы…'}
+          {error ? 'Не удалось загрузить вопросы' : 'Загружаем вопросы…'}
         </p>
+
+        {error && (
+          <>
+            <p className="mt-3 text-center text-kiosk-sm font-medium text-white/80">
+              {error}
+            </p>
+            <div className="mt-auto flex flex-col items-center gap-4 pt-10">
+              <QuizButton onClick={() => void loadQuiz()}>
+                Попробовать снова
+              </QuizButton>
+              <QuizButton tone="pale" onClick={onStations}>
+                К станциям
+              </QuizButton>
+            </div>
+          </>
+        )}
       </QuizScreen>
     );
   }
