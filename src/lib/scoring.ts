@@ -18,11 +18,6 @@ export const SCORING = {
     betMultiplier: 2,
   },
 
-  /** Фото-квиз (автоматически). */
-  photoQuiz: {
-    correct: 25,
-    wrong: 0,
-  },
 
   /** Спорт-активности — оператор вводит результат, баллы предлагаются. */
   sport: {
@@ -97,10 +92,6 @@ export function quizCompletionBonus(): number {
    Фото-квиз
    ========================================================================== */
 
-export function photoQuizPoints(correct: boolean, questionPoints?: number): number {
-  if (!correct) return SCORING.photoQuiz.wrong;
-  return questionPoints ?? SCORING.photoQuiz.correct;
-}
 
 /* ==========================================================================
    Спорт-активности
@@ -153,8 +144,6 @@ export function suggestPoints(
       const score = Math.max(0, toNumber(rawResult));
       return Math.round(score / divisor);
     }
-    case 'photo_quiz':
-      return SCORING.photoQuiz.correct;
     case 'quiz_roulette_v1':
     case 'quiz_roulette_v2':
       return SCORING.quiz.levelPoints[1];

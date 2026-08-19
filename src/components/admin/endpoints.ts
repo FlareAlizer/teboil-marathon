@@ -8,7 +8,6 @@
 
 import type {
   Activity,
-  AdminPhotoQuestion,
   DayStats,
   LeaderboardRow,
   PlayerSummary,
@@ -120,68 +119,3 @@ export function getLeaderboard(limit = 10): Promise<LeaderboardData> {
   return adminFetch<LeaderboardData>(`/api/leaderboard?limit=${limit}`);
 }
 
-/* ------------------------------ Фото-вопросы ------------------------------ */
-
-export async function listAdminQuestions(): Promise<AdminPhotoQuestion[]> {
-  const data = await adminFetch<{ questions: AdminPhotoQuestion[] }>(
-    '/api/photo-questions?admin=1',
-  );
-  return data.questions;
-}
-
-export interface QuestionPayload {
-  imagePath: string;
-  question: string;
-  options: string[];
-  correctIndex: number;
-  points: number;
-  active: boolean;
-}
-
-export async function createQuestion(
-  payload: QuestionPayload,
-): Promise<AdminPhotoQuestion> {
-  const data = await adminPost<{ question: AdminPhotoQuestion }>(
-    '/api/photo-questions',
-    payload,
-  );
-  return data.question;
-}
-
-export async function updateQuestion(
-  id: number,
-  patch: Partial<QuestionPayload>,
-): Promise<AdminPhotoQuestion> {
-  const data = await adminFetch<{ question: AdminPhotoQuestion }>(
-    '/api/photo-questions',
-    {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, ...patch }),
-    },
-  );
-  return data.question;
-}
-
-export function deleteQuestion(id: number): Promise<{ deleted: number }> {
-  return adminFetch<{ deleted: number }>(`/api/photo-questions?id=${id}`, {
-    method: 'DELETE',
-  });
-}
-
-export interface UploadResult {
-  path: string;
-  bytes: number;
-  type: string;
-}
-
-/** Загрузка картинки. Поле формы — `file`, до 5 МБ, только изображения. */
-export function uploadImage(file: File): Promise<UploadResult> {
-  const form = new FormData();
-  form.append('file', file);
-  // Content-Type не ставим вручную: браузер сам добавит boundary.
-  return adminFetch<UploadResult>('/api/photo-questions/upload', {
-    method: 'POST',
-    body: form,
-  });
-}

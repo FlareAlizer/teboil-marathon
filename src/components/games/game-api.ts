@@ -8,7 +8,7 @@
  * выкидывать участника на экран входа.
  */
 
-import type { ApiResponse, PublicPhotoQuestion, QuizVariant } from '@/lib/types';
+import type { ApiResponse, QuizVariant } from '@/lib/types';
 
 const PLAYER_KEY = 'teboil.player';
 
@@ -169,29 +169,3 @@ export function completeQuiz(
   return post<QuizCompleteResponse>('/api/quiz/complete', { playerId, variant });
 }
 
-/* ------------------------------- Фото-квиз -------------------------------- */
-
-export async function getPhotoQuestions(): Promise<PublicPhotoQuestion[]> {
-  const data = await request<{ questions: PublicPhotoQuestion[] }>(
-    '/api/photo-questions',
-  );
-  return data.questions;
-}
-
-export interface PhotoCheckResponse {
-  correct: boolean;
-  correctIndex: number;
-  points: number;
-  awarded: boolean;
-  alreadyAnswered: boolean;
-  totalPoints: number;
-  todayPoints: number;
-}
-
-export function checkPhotoAnswer(input: {
-  playerId: number;
-  questionId: number;
-  answerIndex: number;
-}): Promise<PhotoCheckResponse> {
-  return post<PhotoCheckResponse>('/api/photo-questions/check', input);
-}

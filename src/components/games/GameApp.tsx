@@ -17,7 +17,6 @@ import {
 } from './game-api';
 import { RouletteQuiz } from './RouletteQuiz';
 import { QuizPickScreen } from './QuizPickScreen';
-import { PhotoQuiz } from './PhotoQuiz';
 import { SportsShowcase } from './SportsShowcase';
 
 type Screen =
@@ -25,7 +24,6 @@ type Screen =
   | 'stations'
   | 'quizPick'
   | 'quiz'
-  | 'photo'
   | 'sports';
 
 /**
@@ -116,16 +114,6 @@ export function GameApp() {
     );
   }
 
-  if (screen === 'photo') {
-    return (
-      <PhotoQuiz
-        player={player}
-        onPoints={updatePoints}
-        onExit={() => setScreen('menu')}
-      />
-    );
-  }
-
   if (screen === 'sports') {
     return <SportsShowcase player={player} onExit={() => setScreen('menu')} />;
   }
@@ -203,6 +191,16 @@ function LoginScreen({ onLogin }: { onLogin: (p: CurrentPlayer) => void }) {
           <br />
           Нет юзернейма в Телеграме? Подойди к волонтёру, он тебя запишет.
         </p>
+
+        {/* Вход для волонтёра. Намеренно неброский: участнику он не нужен,
+            а оператору не приходится помнить адрес и держать второй сайт.
+            Панель всё равно закрыта паролем. */}
+        <a
+          href="/admin"
+          className="mt-8 self-center text-kiosk-sm font-bold text-teboil-muted underline underline-offset-4"
+        >
+          Панель оператора
+        </a>
       </div>
     </main>
   );
@@ -244,12 +242,6 @@ function Menu({
             note="Чеканка, полоса, гол, дартс"
             onClick={() => onGo('sports')}
           />
-          <Tile
-            tone="blue"
-            title="Угадай по фото"
-            note="Определи дистанцию по снимку"
-            onClick={() => onGo('photo')}
-          />
         </div>
 
         <div className="mt-auto flex flex-col gap-4 pt-10">
@@ -275,6 +267,14 @@ function Menu({
           <Button variant="danger" size="md" fullWidth onClick={onFinish}>
             Следующий участник
           </Button>
+
+          {/* Вход для волонтёра — тот же, что на экране входа. */}
+          <a
+            href="/admin"
+            className="self-center text-kiosk-sm font-bold text-teboil-muted underline underline-offset-4"
+          >
+            Панель оператора
+          </a>
         </div>
       </div>
     </main>

@@ -3,9 +3,8 @@
  * чтобы её было видно и легко проверить отдельно от вёрстки.
  *
  * В макете пять строк: Квиз, Бутсы, Полоса препятствий, Забей гол, Дартс.
- * В данных квизов три вида (`quiz_roulette_v1`, `quiz_roulette_v2`,
- * `photo_quiz`) — в строке «Квиз» они схлопнуты в одну сумму, иначе список
- * на экране не совпал бы с макетом.
+ * Оба варианта квиза (`quiz_roulette_v1` и `quiz_roulette_v2`) схлопнуты
+ * в одну строку «Квиз».
  */
 
 import type { Activity, ScoreEvent } from '@/lib/types';
@@ -22,7 +21,7 @@ export type StationId = (typeof STATION_IDS)[number];
 
 /** Какие активности из данных попадают в какую строку экрана. */
 const STATION_ACTIVITIES: Record<StationId, readonly Activity[]> = {
-  quiz: ['quiz_roulette_v1', 'quiz_roulette_v2', 'photo_quiz'],
+  quiz: ['quiz_roulette_v1', 'quiz_roulette_v2'],
   sport_keepups: ['sport_keepups'],
   sport_obstacle: ['sport_obstacle'],
   sport_goal: ['sport_goal'],

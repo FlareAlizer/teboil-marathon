@@ -153,27 +153,6 @@ async function testAdminGuard(playerId) {
   check('удаление начисления требует сессию', del.status === 401,
     `HTTP ${del.status}`);
 
-  const create = await postJson('/api/photo-questions', {
-    imagePath: '/x.jpg', question: 'q', options: ['1', '2', '3', '4'],
-    correctIndex: 0, points: 25, active: true,
-  });
-  check('создание фото-вопроса требует сессию', create.status === 401,
-    `HTTP ${create.status}`);
-
-  const upload = await api('/api/photo-questions/upload', {
-    method: 'POST', body: new FormData(),
-  });
-  check('загрузка файла требует сессию', upload.status === 401,
-    `HTTP ${upload.status}`);
-
-  const adminList = await api('/api/photo-questions?admin=1');
-  const leaked = JSON.stringify(adminList.body ?? {}).includes('correctIndex');
-  check('без сессии нельзя получить ответы через ?admin=1',
-    adminList.status === 401 || !leaked, `HTTP ${adminList.status}`);
-
-  const publicList = await api('/api/photo-questions');
-  check('публичный список фото-вопросов без correctIndex',
-    !JSON.stringify(publicList.body ?? {}).includes('correctIndex'));
 }
 
 /* ------------------------ Начисление и счётчики дня ------------------------ */

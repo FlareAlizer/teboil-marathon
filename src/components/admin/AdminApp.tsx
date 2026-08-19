@@ -7,17 +7,15 @@ import { LoginForm } from './LoginForm';
 import { ScoreScreen } from './ScoreScreen';
 import { PlayersTab } from './PlayersTab';
 import { StatsTab } from './StatsTab';
-import { PhotoQuestionsTab } from './PhotoQuestionsTab';
 
 type Auth = 'checking' | 'in' | 'out' | 'expired';
 
-export type AdminTab = 'score' | 'players' | 'stats' | 'photo';
+export type AdminTab = 'score' | 'players' | 'stats';
 
 const TABS: Array<{ id: AdminTab; label: string }> = [
   { id: 'score', label: 'Баллы' },
   { id: 'players', label: 'Игроки' },
   { id: 'stats', label: 'Статистика' },
-  { id: 'photo', label: 'Фото' },
 ];
 
 /**
@@ -84,7 +82,6 @@ export function AdminApp() {
         {tab === 'score' && <ScoreScreen />}
         {tab === 'players' && <PlayersTab />}
         {tab === 'stats' && <StatsTab />}
-        {tab === 'photo' && <PhotoQuestionsTab />}
       </main>
 
       {/* Вкладки внизу: телефон в одной руке, большой палец достаёт до низа */}

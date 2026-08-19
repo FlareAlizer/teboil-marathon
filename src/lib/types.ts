@@ -3,7 +3,6 @@
 export const ACTIVITIES = [
   'quiz_roulette_v1',
   'quiz_roulette_v2',
-  'photo_quiz',
   'sport_keepups',
   'sport_obstacle',
   'sport_goal',
@@ -30,14 +29,12 @@ export type SportActivity = (typeof SPORT_ACTIVITIES)[number];
 export const QUIZ_ACTIVITIES = [
   'quiz_roulette_v1',
   'quiz_roulette_v2',
-  'photo_quiz',
 ] as const satisfies readonly Activity[];
 
 /** Русские подписи для админки, лидерборда и игровых экранов. */
 export const ACTIVITY_LABELS: Record<Activity, string> = {
   quiz_roulette_v1: 'Квиз с рулеткой (вариант 1)',
   quiz_roulette_v2: 'Квиз с рулеткой (вариант 2)',
-  photo_quiz: 'Фото-квиз',
   sport_keepups: 'Чеканка мяча',
   sport_obstacle: 'Полоса препятствий',
   sport_goal: 'Забей гол',
@@ -86,20 +83,6 @@ export interface LeaderboardRow {
   nickname: string;
   points: number;
   firstEventAt: string;
-}
-
-/** Фото-вопрос в том виде, в котором он уходит участнику: без correctIndex. */
-export interface PublicPhotoQuestion {
-  id: number;
-  imagePath: string;
-  question: string;
-  options: string[];
-  points: number;
-}
-
-export interface AdminPhotoQuestion extends PublicPhotoQuestion {
-  correctIndex: number;
-  active: boolean;
 }
 
 /** Квиз с рулеткой: вопрос без правильного ответа. */

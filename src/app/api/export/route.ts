@@ -26,7 +26,6 @@ export const dynamic = 'force-dynamic';
 const COLUMNS = [
   'quiz_roulette_v1',
   'quiz_roulette_v2',
-  'photo_quiz',
   'sport_keepups',
   'sport_obstacle',
   'sport_goal',
@@ -44,7 +43,7 @@ const _allActivitiesListed: ListedActivity extends Activity
 void _allActivitiesListed;
 
 function isAuto(activity: Activity): boolean {
-  return activity.startsWith('quiz_') || activity === 'photo_quiz';
+  return activity.startsWith('quiz_');
 }
 
 /**

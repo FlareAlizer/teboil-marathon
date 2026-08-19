@@ -380,7 +380,7 @@ export function getDayStats(day = todayLocal()): DayStats {
     .prepare(
       `SELECT COUNT(DISTINCT player_id) AS c FROM score_events
         WHERE substr(created_at,1,10) = ?
-          AND (activity LIKE 'quiz_%' OR activity = 'photo_quiz')`,
+          AND activity LIKE 'quiz_%'`,
     )
     .get(day) as { c: number };
 
