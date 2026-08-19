@@ -18,7 +18,7 @@ export function POST(request: Request) {
   return handle(async () => {
     const body = await readJson(request);
     const nickname = normalizeTelegramUsername(body.nickname);
-    const result = loginPlayer(nickname);
+    const result = await loginPlayer(nickname);
 
     return jsonOk({
       id: result.player.id,

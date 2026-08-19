@@ -76,7 +76,7 @@ export async function GET(request: Request): Promise<Response> {
   const day = url.searchParams.get('day') ?? todayLocal();
 
   // Лидерборд уже отсортирован по убыванию баллов — в таблице тот же порядок.
-  const rows = getLeaderboard(1000, day);
+  const rows = await getLeaderboard(1000, day);
 
   const header = [
     'Имя пользователя',
@@ -87,7 +87,7 @@ export async function GET(request: Request): Promise<Response> {
   const lines = [header.map(csvCell).join(';')];
 
   for (const row of rows) {
-    const events = getPlayerEvents(row.id).filter(
+    const events = (await getPlayerEvents(row.id)).filter(
       (e) => e.createdAt.slice(0, 10) === day,
     );
 
@@ -122,7 +122,7 @@ export async function GET(request: Request): Promise<Response> {
   );
 
   for (const row of rows) {
-    for (const event of getPlayerEvents(row.id)) {
+    for (const event of await getPlayerEvents(row.id)) {
       if (event.createdAt.slice(0, 10) !== day) continue;
       lines.push(
         [

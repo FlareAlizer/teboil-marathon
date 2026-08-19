@@ -1,4 +1,4 @@
-import { getDb, nicknameKey, nowLocal, todayLocal } from './db';
+import { nicknameKey, sql, todayLocal, tx } from './db';
 import {
   ACTIVITIES,
   type Activity,
@@ -12,70 +12,79 @@ import {
 
 /* ==========================================================================
    Запросы к базе. Всё, что пишет и читает players / score_events / visits.
+
+   День события хранится колонкой `event_day`, поэтому запросы дня идут по
+   обычным индексам, без вычислений над датой.
    ========================================================================== */
 
 interface PlayerRow {
   id: number;
   nickname: string;
-  created_at: string;
-  event_day: string;
+  created_at: Date | string;
+  event_day: Date | string;
+}
+
+/** Дата из Postgres приходит объектом; наружу отдаём YYYY-MM-DD. */
+function asDay(value: Date | string): string {
+  return value instanceof Date ? todayLocal(value) : String(value).slice(0, 10);
+}
+
+/** Метка времени в виде «YYYY-MM-DD HH:MM:SS» — в таком виде её ждёт клиент. */
+function asStamp(value: Date | string): string {
+  if (!(value instanceof Date)) return String(value);
+  const hh = String(value.getHours()).padStart(2, '0');
+  const mm = String(value.getMinutes()).padStart(2, '0');
+  const ss = String(value.getSeconds()).padStart(2, '0');
+  return `${todayLocal(value)} ${hh}:${mm}:${ss}`;
 }
 
 function mapPlayer(row: PlayerRow): Player {
   return {
     id: row.id,
     nickname: row.nickname,
-    createdAt: row.created_at,
-    eventDay: row.event_day,
+    createdAt: asStamp(row.created_at),
+    eventDay: asDay(row.event_day),
   };
 }
 
 interface EventRow {
-  id: number;
+  id: number | string;
   player_id: number;
   activity: string;
-  points: number;
+  points: number | string;
   raw_result: string | null;
-  meta: string | null;
-  created_at: string;
+  meta: Record<string, unknown> | null;
+  created_at: Date | string;
   created_by: string;
 }
 
 function mapEvent(row: EventRow): ScoreEvent {
-  let meta: Record<string, unknown> | null = null;
-  if (row.meta) {
-    try {
-      meta = JSON.parse(row.meta) as Record<string, unknown>;
-    } catch {
-      meta = null;
-    }
-  }
   return {
-    id: row.id,
+    id: Number(row.id),
     playerId: row.player_id,
     activity: row.activity as Activity,
-    points: row.points,
+    points: Number(row.points),
     rawResult: row.raw_result,
-    meta,
-    createdAt: row.created_at,
+    // meta лежит в jsonb — драйвер уже отдаёт объект, разбирать не нужно.
+    meta: row.meta ?? null,
+    createdAt: asStamp(row.created_at),
     createdBy: row.created_by as CreatedBy,
   };
 }
 
 /* --------------------------------- Игроки -------------------------------- */
 
-export function findPlayerByNickname(nickname: string): Player | null {
-  const row = getDb()
-    .prepare('SELECT * FROM players WHERE nickname_key = ? ORDER BY id LIMIT 1')
-    .get(nicknameKey(nickname)) as PlayerRow | undefined;
-  return row ? mapPlayer(row) : null;
+export async function findPlayerByNickname(nickname: string): Promise<Player | null> {
+  const rows = await sql<PlayerRow>(
+    'SELECT * FROM players WHERE nickname_key = $1 ORDER BY id LIMIT 1',
+    [nicknameKey(nickname)],
+  );
+  return rows[0] ? mapPlayer(rows[0]) : null;
 }
 
-export function findPlayerById(id: number): Player | null {
-  const row = getDb().prepare('SELECT * FROM players WHERE id = ?').get(id) as
-    | PlayerRow
-    | undefined;
-  return row ? mapPlayer(row) : null;
+export async function findPlayerById(id: number): Promise<Player | null> {
+  const rows = await sql<PlayerRow>('SELECT * FROM players WHERE id = $1', [id]);
+  return rows[0] ? mapPlayer(rows[0]) : null;
 }
 
 export interface LoginResult {
@@ -86,156 +95,172 @@ export interface LoginResult {
 }
 
 /**
- * Вход по никнейму. Если игрок уже есть — возвращаем его (повторный вход),
- * иначе создаём. В обоих случаях отмечаем визит за сегодня, если его ещё нет.
+ * Вход по никнейму: если участник уже есть — возвращаем его, иначе создаём.
+ *
+ * Вставка идёт через ON CONFLICT, а не «сначала проверить, потом вставить».
+ * При нескольких рабочих процессах два одновременных входа с одним ником
+ * иначе создали бы двух участников, и человек потерял бы часть баллов.
  */
-export function loginPlayer(nickname: string, day = todayLocal()): LoginResult {
-  const db = getDb();
-  const tx = db.transaction((name: string): { player: Player; created: boolean } => {
-    const key = nicknameKey(name);
-    const existing = db
-      .prepare('SELECT * FROM players WHERE nickname_key = ? ORDER BY id LIMIT 1')
-      .get(key) as PlayerRow | undefined;
+export async function loginPlayer(
+  nickname: string,
+  day = todayLocal(),
+): Promise<LoginResult> {
+  const key = nicknameKey(nickname);
 
-    if (existing) {
-      registerVisit(existing.id, day);
-      return { player: mapPlayer(existing), created: false };
+  const { player, created } = await tx(async (client) => {
+    const inserted = await client.query<PlayerRow>(
+      `INSERT INTO players (nickname, nickname_key, event_day)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (nickname_key) DO NOTHING
+       RETURNING *`,
+      [nickname, key, day],
+    );
+
+    let row = inserted.rows[0];
+    const isNew = Boolean(row);
+
+    if (!row) {
+      const existing = await client.query<PlayerRow>(
+        'SELECT * FROM players WHERE nickname_key = $1',
+        [key],
+      );
+      row = existing.rows[0];
     }
 
-    const info = db
-      .prepare(
-        'INSERT INTO players (nickname, nickname_key, created_at, event_day) VALUES (?, ?, ?, ?)',
-      )
-      .run(name, key, nowLocal(), day);
-    const id = Number(info.lastInsertRowid);
-    registerVisit(id, day);
-    const row = db.prepare('SELECT * FROM players WHERE id = ?').get(id) as PlayerRow;
-    return { player: mapPlayer(row), created: true };
+    await client.query(
+      `INSERT INTO visits (player_id, event_day) VALUES ($1, $2)
+       ON CONFLICT (player_id, event_day) DO NOTHING`,
+      [row.id, day],
+    );
+
+    return { player: mapPlayer(row), created: isNew };
   });
 
-  const { player, created } = tx(nickname);
   return {
     player,
     created,
-    totalPoints: getTotalPoints(player.id),
-    todayPoints: getTotalPoints(player.id, day),
+    totalPoints: await getTotalPoints(player.id),
+    todayPoints: await getTotalPoints(player.id, day),
   };
 }
 
-/** Одна отметка визита на игрока в день. */
-export function registerVisit(playerId: number, day = todayLocal()): void {
-  getDb()
-    .prepare(
-      `INSERT OR IGNORE INTO visits (player_id, event_day, created_at)
-       VALUES (?, ?, ?)`,
-    )
-    .run(playerId, day, nowLocal());
+/** Одна отметка визита на участника в день. */
+export async function registerVisit(
+  playerId: number,
+  day = todayLocal(),
+): Promise<void> {
+  await sql(
+    `INSERT INTO visits (player_id, event_day) VALUES ($1, $2)
+     ON CONFLICT (player_id, event_day) DO NOTHING`,
+    [playerId, day],
+  );
 }
 
-/** Поиск для админки: частичное совпадение по никнейму. */
-export function searchPlayers(query: string, limit = 20): PlayerSummary[] {
+interface SummaryRow {
+  id: number;
+  nickname: string;
+  total_points: string | number;
+  today_points: string | number;
+}
+
+function mapSummary(r: SummaryRow): PlayerSummary {
+  return {
+    id: r.id,
+    nickname: r.nickname,
+    totalPoints: Number(r.total_points),
+    todayPoints: Number(r.today_points),
+  };
+}
+
+/**
+ * Поиск для админки: частичное совпадение по никнейму.
+ *
+ * Сначала отбираем строки и режем LIMIT, и только потом считаем суммы. В
+ * обратном порядке суммы вычисляются для каждого совпадения ещё до отсечения,
+ * а поиск идёт на каждое нажатие клавиши оператора — на базе целого дня
+ * разница была больше чем в тридцать раз.
+ */
+export async function searchPlayers(
+  query: string,
+  limit = 20,
+): Promise<PlayerSummary[]> {
   const day = todayLocal();
-  const rows = getDb()
-    .prepare(
-      // Сначала отбираем строки и режем LIMIT, и только потом считаем суммы.
-      // В прежнем варианте суммы баллов считались коррелированными подзапросами
-      // для КАЖДОГО совпадения ещё до отсечения. Теперь их считает только 20
-      // отобранных строк — по индексу, одинаково быстро и при пустом запросе. Поиск — самое частое действие оператора, он идёт
-      // на каждое нажатие клавиши, поэтому разница заметна руками.
-      `WITH found AS (
-         SELECT id, nickname
-           FROM players
-          WHERE nickname LIKE @like ESCAPE '~' COLLATE NOCASE
-          ORDER BY (nickname = @exact COLLATE NOCASE) DESC, nickname COLLATE NOCASE
-          LIMIT @limit
-       )
-       SELECT f.id,
-              f.nickname,
-              COALESCE((SELECT SUM(points) FROM score_events
-                         WHERE player_id = f.id), 0) AS total_points,
-              COALESCE((SELECT SUM(points) FROM score_events
-                         WHERE player_id = f.id
-                           AND substr(created_at,1,10) = @day), 0) AS today_points
-         FROM found f
-        ORDER BY (f.nickname = @exact COLLATE NOCASE) DESC, f.nickname COLLATE NOCASE`,
-    )
-    .all({
-      // Тильда объявлена в ESCAPE, ей же экранируем спецсимволы шаблона.
-      like: `%${query.replace(/[~%_]/g, (m) => `~${m}`)}%`,
-      exact: query,
-      day,
-      limit,
-    }) as Array<{
-    id: number;
-    nickname: string;
-    total_points: number;
-    today_points: number;
-  }>;
+  const exact = query.trim().toLowerCase();
+  const like = `%${exact.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
 
-  return rows.map((r) => ({
-    id: r.id,
-    nickname: r.nickname,
-    totalPoints: r.total_points,
-    todayPoints: r.today_points,
-  }));
+  const rows = await sql<SummaryRow>(
+    `WITH found AS (
+       SELECT id, nickname
+         FROM players
+        WHERE lower(nickname) LIKE $1
+        ORDER BY (lower(nickname) = $2) DESC, nickname
+        LIMIT $3
+     )
+     SELECT f.id,
+            f.nickname,
+            COALESCE((SELECT SUM(points) FROM score_events
+                       WHERE player_id = f.id), 0) AS total_points,
+            COALESCE((SELECT SUM(points) FROM score_events
+                       WHERE player_id = f.id AND event_day = $4), 0) AS today_points
+       FROM found f
+      ORDER BY (lower(f.nickname) = $2) DESC, f.nickname`,
+    [like, exact, limit, day],
+  );
+
+  return rows.map(mapSummary);
 }
 
-/** Все игроки дня — для выпадающих списков админки. */
-export function listPlayersOfDay(day = todayLocal(), limit = 500): PlayerSummary[] {
-  const rows = getDb()
-    .prepare(
-      // Та же схема, что и в searchPlayers: сначала отбираем и режем LIMIT,
-      // потом считаем суммы — иначе они считаются для всех участников дня.
-      // Это вид по умолчанию на вкладке «Баллы», он открывается постоянно.
-      `WITH found AS (
-         SELECT p.id, p.nickname, v.created_at
-           FROM players p
-           JOIN visits v ON v.player_id = p.id AND v.event_day = @day
-          ORDER BY v.created_at DESC
-          LIMIT @limit
-       )
-       SELECT f.id,
-              f.nickname,
-              COALESCE((SELECT SUM(points) FROM score_events
-                         WHERE player_id = f.id), 0) AS total_points,
-              COALESCE((SELECT SUM(points) FROM score_events
-                         WHERE player_id = f.id
-                           AND substr(created_at,1,10) = @day), 0) AS today_points
-         FROM found f
-        ORDER BY f.created_at DESC`,
-    )
-    .all({ day, limit }) as Array<{
-    id: number;
-    nickname: string;
-    total_points: number;
-    today_points: number;
-  }>;
-  return rows.map((r) => ({
-    id: r.id,
-    nickname: r.nickname,
-    totalPoints: r.total_points,
-    todayPoints: r.today_points,
-  }));
+/** Участники дня — вид по умолчанию на вкладке «Баллы». */
+export async function listPlayersOfDay(
+  day = todayLocal(),
+  limit = 500,
+): Promise<PlayerSummary[]> {
+  const rows = await sql<SummaryRow>(
+    `WITH found AS (
+       SELECT p.id, p.nickname, v.created_at
+         FROM players p
+         JOIN visits v ON v.player_id = p.id AND v.event_day = $1
+        ORDER BY v.created_at DESC
+        LIMIT $2
+     )
+     SELECT f.id,
+            f.nickname,
+            COALESCE((SELECT SUM(points) FROM score_events
+                       WHERE player_id = f.id), 0) AS total_points,
+            COALESCE((SELECT SUM(points) FROM score_events
+                       WHERE player_id = f.id AND event_day = $1), 0) AS today_points
+       FROM found f
+      ORDER BY f.created_at DESC`,
+    [day, limit],
+  );
+
+  return rows.map(mapSummary);
 }
 
 /* --------------------------------- Баллы --------------------------------- */
 
-export function getTotalPoints(playerId: number, day?: string): number {
-  const sql = day
-    ? `SELECT COALESCE(SUM(points),0) AS total FROM score_events
-        WHERE player_id = ? AND substr(created_at,1,10) = ?`
-    : 'SELECT COALESCE(SUM(points),0) AS total FROM score_events WHERE player_id = ?';
-  const args = day ? [playerId, day] : [playerId];
-  const row = getDb().prepare(sql).get(...args) as { total: number };
-  return row.total;
+export async function getTotalPoints(playerId: number, day?: string): Promise<number> {
+  const rows = day
+    ? await sql<{ total: string }>(
+        `SELECT COALESCE(SUM(points),0) AS total FROM score_events
+          WHERE player_id = $1 AND event_day = $2`,
+        [playerId, day],
+      )
+    : await sql<{ total: string }>(
+        'SELECT COALESCE(SUM(points),0) AS total FROM score_events WHERE player_id = $1',
+        [playerId],
+      );
+  return Number(rows[0]?.total ?? 0);
 }
 
-export function getPlayerEvents(playerId: number, limit = 200): ScoreEvent[] {
-  const rows = getDb()
-    .prepare(
-      'SELECT * FROM score_events WHERE player_id = ? ORDER BY id DESC LIMIT ?',
-    )
-    .all(playerId, limit) as EventRow[];
+export async function getPlayerEvents(
+  playerId: number,
+  limit = 200,
+): Promise<ScoreEvent[]> {
+  const rows = await sql<EventRow>(
+    'SELECT * FROM score_events WHERE player_id = $1 ORDER BY id DESC LIMIT $2',
+    [playerId, limit],
+  );
   return rows.map(mapEvent);
 }
 
@@ -252,39 +277,71 @@ export interface AddScoreResult {
   event: ScoreEvent;
   totalPoints: number;
   todayPoints: number;
+  /** Ответ на этот вопрос уже был засчитан — повторно баллы не начислены. */
+  duplicate?: boolean;
 }
 
-export function addScoreEvent(input: AddScoreInput): AddScoreResult {
-  const db = getDb();
+/**
+ * Начисление баллов.
+ *
+ * Для ответов квиза работает уникальный индекс по (участник, активность,
+ * вопрос): при гонке двух запросов второй просто не вставится, и мы вернём
+ * `duplicate`. Это надёжнее проверки «уже отвечал?» в коде — она при
+ * нескольких рабочих процессах гонку проигрывает.
+ */
+export async function addScoreEvent(input: AddScoreInput): Promise<AddScoreResult> {
   const day = todayLocal();
-  const info = db
-    .prepare(
-      `INSERT INTO score_events (player_id, activity, points, raw_result, meta, created_at, created_by)
-       VALUES (@playerId, @activity, @points, @rawResult, @meta, @createdAt, @createdBy)`,
-    )
-    .run({
-      playerId: input.playerId,
-      activity: input.activity,
-      points: input.points,
-      rawResult: input.rawResult ?? null,
-      meta: input.meta ? JSON.stringify(input.meta) : null,
-      createdAt: nowLocal(),
-      createdBy: input.createdBy ?? 'auto',
-    });
+
+  const inserted = await tx(async (client) => {
+    const result = await client.query<EventRow>(
+      `INSERT INTO score_events
+         (player_id, activity, points, raw_result, meta, event_day, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT DO NOTHING
+       RETURNING *`,
+      [
+        input.playerId,
+        input.activity,
+        input.points,
+        input.rawResult ?? null,
+        input.meta ? JSON.stringify(input.meta) : null,
+        day,
+        input.createdBy ?? 'auto',
+      ],
+    );
+
+    // Участник пришёл на активность — значит он сегодня был на стенде.
+    await client.query(
+      `INSERT INTO visits (player_id, event_day) VALUES ($1, $2)
+       ON CONFLICT (player_id, event_day) DO NOTHING`,
+      [input.playerId, day],
+    );
+
+    return result.rows[0] ?? null;
+  });
 
   invalidateBoardCache();
 
-  // Игрок пришёл на активность — значит он сегодня был на стенде.
-  registerVisit(input.playerId, day);
-
-  const row = db
-    .prepare('SELECT * FROM score_events WHERE id = ?')
-    .get(Number(info.lastInsertRowid)) as EventRow;
+  if (!inserted) {
+    // Вставки не было: сработал уникальный индекс на ответ квиза.
+    const existing = await sql<EventRow>(
+      `SELECT * FROM score_events
+        WHERE player_id = $1 AND activity = $2 AND meta->>'questionId' = $3
+        ORDER BY id LIMIT 1`,
+      [input.playerId, input.activity, String(input.meta?.questionId ?? '')],
+    );
+    return {
+      event: mapEvent(existing[0]),
+      totalPoints: await getTotalPoints(input.playerId),
+      todayPoints: await getTotalPoints(input.playerId, day),
+      duplicate: true,
+    };
+  }
 
   return {
-    event: mapEvent(row),
-    totalPoints: getTotalPoints(input.playerId),
-    todayPoints: getTotalPoints(input.playerId, day),
+    event: mapEvent(inserted),
+    totalPoints: await getTotalPoints(input.playerId),
+    todayPoints: await getTotalPoints(input.playerId, day),
   };
 }
 
@@ -298,198 +355,183 @@ export interface DeleteScoreResult {
 
 /**
  * Отмена начисления. Оператор работает в спешке у стенда и будет ошибаться —
- * без отмены единственным выходом останется правка базы руками во время
- * мероприятия. Возвращает `deleted: 0`, если записи уже нет: повторный тап
- * по кнопке отмены не должен выглядеть как сбой.
+ * без отмены единственным выходом осталась бы правка базы руками прямо во
+ * время мероприятия.
  */
-export function deleteScoreEvent(id: number): DeleteScoreResult | null {
-  const db = getDb();
-  const row = db.prepare('SELECT * FROM score_events WHERE id = ?').get(id) as
-    | EventRow
-    | undefined;
-
+export async function deleteScoreEvent(id: number): Promise<DeleteScoreResult | null> {
+  const rows = await sql<EventRow>(
+    'DELETE FROM score_events WHERE id = $1 RETURNING *',
+    [id],
+  );
+  const row = rows[0];
   if (!row) return null;
 
-  const info = db.prepare('DELETE FROM score_events WHERE id = ?').run(id);
   invalidateBoardCache();
   const day = todayLocal();
 
   return {
-    deleted: info.changes,
+    deleted: 1,
     playerId: row.player_id,
-    points: row.points,
-    totalPoints: getTotalPoints(row.player_id),
-    todayPoints: getTotalPoints(row.player_id, day),
+    points: Number(row.points),
+    totalPoints: await getTotalPoints(row.player_id),
+    todayPoints: await getTotalPoints(row.player_id, day),
   };
 }
 
-/** Сколько раз игрок уже играл в активность сегодня (защита от накруток). */
-export function countActivityToday(
+/** Сколько раз участник уже играл в активность сегодня. */
+export async function countActivityToday(
   playerId: number,
   activity: Activity,
   day = todayLocal(),
-): number {
-  const row = getDb()
-    .prepare(
-      `SELECT COUNT(*) AS c FROM score_events
-        WHERE player_id = ? AND activity = ? AND substr(created_at,1,10) = ?`,
-    )
-    .get(playerId, activity, day) as { c: number };
-  return row.c;
+): Promise<number> {
+  const rows = await sql<{ c: string }>(
+    `SELECT COUNT(*) AS c FROM score_events
+      WHERE player_id = $1 AND activity = $2 AND event_day = $3`,
+    [playerId, activity, day],
+  );
+  return Number(rows[0]?.c ?? 0);
 }
 
-/** События игрока по активности за день — нужно для бонуса за все уровни квиза. */
-export function getActivityEventsToday(
+/** События участника по активности за день — нужно для бонуса за все уровни. */
+export async function getActivityEventsToday(
   playerId: number,
   activity: Activity,
   day = todayLocal(),
-): ScoreEvent[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT * FROM score_events
-        WHERE player_id = ? AND activity = ? AND substr(created_at,1,10) = ?
-        ORDER BY id ASC`,
-    )
-    .all(playerId, activity, day) as EventRow[];
+): Promise<ScoreEvent[]> {
+  const rows = await sql<EventRow>(
+    `SELECT * FROM score_events
+      WHERE player_id = $1 AND activity = $2 AND event_day = $3
+      ORDER BY id ASC`,
+    [playerId, activity, day],
+  );
   return rows.map(mapEvent);
 }
 
-/* ------------------------------- Лидерборд ------------------------------- */
-
-/** Топ за сегодня: по сумме баллов, при равенстве — кто раньше начал. */
 /* ------------------------------ Кеш лидерборда ---------------------------- */
 
 /**
- * Лидерборд считается агрегатом по всем начислениям дня и запрашивается чаще
- * всего: телевизор опрашивает его каждые 10 секунд, плюс он открывается на
- * экране станций у каждого участника. При очереди на стенде десятки
- * одновременных запросов считают ровно один и тот же ответ.
+ * Лидерборд — агрегат по всем начислениям дня и самый частый запрос:
+ * телевизор опрашивает его каждые 10 секунд, плюс он открывается на экране
+ * станций у каждого участника.
  *
- * Держим его в памяти процесса на пару секунд и сбрасываем при любой записи
- * баллов. Поэтому кеш не может показать устаревшие данные после начисления —
- * он экономит только повторную работу между изменениями.
+ * Держим его в памяти процесса пару секунд и сбрасываем при любой записи
+ * баллов, поэтому устаревшие данные сразу после начисления он не покажет.
+ *
+ * При нескольких рабочих процессах сброс локален: чужая запись становится
+ * видна в пределах этих двух секунд. Для экрана, который и так обновляется
+ * раз в 10 секунд, это незаметно.
  */
 const boardCache = new Map<string, { at: number; rows: LeaderboardRow[] }>();
 const BOARD_TTL_MS = 2000;
 
-/** Любая запись баллов делает кеш недействительным. */
 function invalidateBoardCache(): void {
   boardCache.clear();
 }
 
-export function getLeaderboard(limit = 10, day = todayLocal()): LeaderboardRow[] {
-  const key = day;
-  const hit = boardCache.get(key);
+/** Топ за сегодня: по сумме баллов, при равенстве — кто раньше начал. */
+export async function getLeaderboard(
+  limit = 10,
+  day = todayLocal(),
+): Promise<LeaderboardRow[]> {
+  const hit = boardCache.get(day);
   if (hit && Date.now() - hit.at < BOARD_TTL_MS && hit.rows.length >= limit) {
     return hit.rows.slice(0, limit);
   }
 
-  const rows = getDb()
-    .prepare(
-      `SELECT p.id,
-              p.nickname,
-              SUM(se.points) AS points,
-              MIN(se.created_at) AS first_at
-         FROM score_events se
-         JOIN players p ON p.id = se.player_id
-        WHERE substr(se.created_at,1,10) = @day
-        GROUP BY p.id, p.nickname
-        ORDER BY points DESC, first_at ASC, p.id ASC
-        LIMIT @limit`,
-    )
-    .all({ day, limit }) as Array<{
+  const rows = await sql<{
     id: number;
     nickname: string;
-    points: number;
-    first_at: string;
-  }>;
+    points: string;
+    first_at: Date | string;
+  }>(
+    `SELECT p.id,
+            p.nickname,
+            SUM(se.points) AS points,
+            MIN(se.created_at) AS first_at
+       FROM score_events se
+       JOIN players p ON p.id = se.player_id
+      WHERE se.event_day = $1
+      GROUP BY p.id, p.nickname
+      ORDER BY points DESC, first_at ASC, p.id ASC
+      LIMIT $2`,
+    [day, Math.max(limit, 100)],
+  );
 
   const board = rows.map((r, i) => ({
     rank: i + 1,
     id: r.id,
     nickname: r.nickname,
-    points: r.points,
-    firstEventAt: r.first_at,
+    points: Number(r.points),
+    firstEventAt: asStamp(r.first_at),
   }));
-  boardCache.set(key, { at: Date.now(), rows: board });
-  return board;
+
+  boardCache.set(day, { at: Date.now(), rows: board });
+  return board.slice(0, limit);
 }
 
-/** Позиция конкретного игрока в сегодняшнем зачёте (или null, если без баллов). */
-export function getPlayerRank(playerId: number, day = todayLocal()): number | null {
-  // Раньше здесь строился ВЕСЬ лидерборд на 1000 человек, чтобы найти в нём
-  // одну строку. Экран станций открывает каждый участник, поэтому на полной
-  // базе это была самая дорогая операция дня. Теперь — один запрос: считаем,
-  // сколько человек стоит выше. Порядок тот же, что в лидерборде: больше
-  // баллов, а при равенстве — кто раньше начал.
-  const row = getDb()
-    .prepare(
-      `WITH totals AS (
-         SELECT player_id, SUM(points) AS pts, MIN(created_at) AS first_at
-           FROM score_events
-          WHERE substr(created_at,1,10) = @day
-          GROUP BY player_id
-       ),
-       me AS (SELECT pts, first_at FROM totals WHERE player_id = @playerId)
-       SELECT (SELECT COUNT(*) FROM totals t, me
-                WHERE t.pts > me.pts
-                   OR (t.pts = me.pts AND t.first_at < me.first_at)
-                   OR (t.pts = me.pts AND t.first_at = me.first_at
-                       AND t.player_id < @playerId)) + 1 AS rank,
-              (SELECT COUNT(*) FROM me) AS found`,
-    )
-    .get({ playerId, day }) as { rank: number; found: number } | undefined;
-
-  return row && row.found > 0 ? row.rank : null;
-}
-
-/* -------------------------------- Статистика ------------------------------ */
-
-export function getDayStats(day = todayLocal()): DayStats {
-  const db = getDb();
-
-  const visitors = db
-    .prepare('SELECT COUNT(*) AS c FROM visits WHERE event_day = ?')
-    .get(day) as { c: number };
-
-  const quiz = db
-    .prepare(
-      `SELECT COUNT(DISTINCT player_id) AS c FROM score_events
-        WHERE substr(created_at,1,10) = ?
-          AND activity LIKE 'quiz_%'`,
-    )
-    .get(day) as { c: number };
-
-  const sport = db
-    .prepare(
-      `SELECT COUNT(DISTINCT player_id) AS c FROM score_events
-        WHERE substr(created_at,1,10) = ? AND activity LIKE 'sport_%'`,
-    )
-    .get(day) as { c: number };
-
-  const total = db
-    .prepare(
-      `SELECT COALESCE(SUM(points),0) AS p FROM score_events
-        WHERE substr(created_at,1,10) = ?`,
-    )
-    .get(day) as { p: number };
-
-  const rows = db
-    .prepare(
-      `SELECT activity,
-              COUNT(*) AS events,
-              COUNT(DISTINCT player_id) AS players,
-              COALESCE(SUM(points),0) AS points
+/**
+ * Место участника. Считаем одним запросом, сколько человек стоит выше:
+ * строить ради этого весь лидерборд слишком дорого, а экран станций
+ * открывает каждый участник. Порядок тот же, что в лидерборде.
+ */
+export async function getPlayerRank(
+  playerId: number,
+  day = todayLocal(),
+): Promise<number | null> {
+  const rows = await sql<{ rank: string; found: string }>(
+    `WITH totals AS (
+       SELECT player_id, SUM(points) AS pts, MIN(created_at) AS first_at
          FROM score_events
-        WHERE substr(created_at,1,10) = ?
-        GROUP BY activity`,
-    )
-    .all(day) as Array<{
+        WHERE event_day = $2
+        GROUP BY player_id
+     ),
+     me AS (SELECT pts, first_at FROM totals WHERE player_id = $1)
+     SELECT (SELECT COUNT(*) FROM totals t, me
+              WHERE t.pts > me.pts
+                 OR (t.pts = me.pts AND t.first_at < me.first_at)
+                 OR (t.pts = me.pts AND t.first_at = me.first_at
+                     AND t.player_id < $1)) + 1 AS rank,
+            (SELECT COUNT(*) FROM me) AS found`,
+    [playerId, day],
+  );
+
+  const row = rows[0];
+  return row && Number(row.found) > 0 ? Number(row.rank) : null;
+}
+
+/* ------------------------------- Статистика ------------------------------- */
+
+export async function getDayStats(day = todayLocal()): Promise<DayStats> {
+  const [visitors] = await sql<{ c: string }>(
+    'SELECT COUNT(*) AS c FROM visits WHERE event_day = $1',
+    [day],
+  );
+
+  // Три счётчика одним проходом по дню вместо трёх отдельных запросов.
+  const [totals] = await sql<{ quiz: string; sport: string; points: string }>(
+    `SELECT COUNT(DISTINCT player_id) FILTER (WHERE activity LIKE 'quiz$_%' ESCAPE '$') AS quiz,
+            COUNT(DISTINCT player_id) FILTER (WHERE activity LIKE 'sport$_%' ESCAPE '$') AS sport,
+            COALESCE(SUM(points),0) AS points
+       FROM score_events
+      WHERE event_day = $1`,
+    [day],
+  );
+
+  const rows = await sql<{
     activity: string;
-    events: number;
-    players: number;
-    points: number;
-  }>;
+    events: string;
+    players: string;
+    points: string;
+  }>(
+    `SELECT activity,
+            COUNT(*) AS events,
+            COUNT(DISTINCT player_id) AS players,
+            COALESCE(SUM(points),0) AS points
+       FROM score_events
+      WHERE event_day = $1
+      GROUP BY activity`,
+    [day],
+  );
 
   const byActivity = Object.fromEntries(
     ACTIVITIES.map((a) => [a, { events: 0, players: 0, points: 0 }]),
@@ -498,19 +540,19 @@ export function getDayStats(day = todayLocal()): DayStats {
   for (const r of rows) {
     if (r.activity in byActivity) {
       byActivity[r.activity as Activity] = {
-        events: r.events,
-        players: r.players,
-        points: r.points,
+        events: Number(r.events),
+        players: Number(r.players),
+        points: Number(r.points),
       };
     }
   }
 
   return {
     day,
-    totalVisitors: visitors.c,
-    quizPlayers: quiz.c,
-    sportPlayers: sport.c,
-    totalPoints: total.p,
+    totalVisitors: Number(visitors?.c ?? 0),
+    quizPlayers: Number(totals?.quiz ?? 0),
+    sportPlayers: Number(totals?.sport ?? 0),
+    totalPoints: Number(totals?.points ?? 0),
     byActivity,
   };
 }

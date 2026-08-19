@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic';
  *          rules: { levelPoints, allLevelsBonus, betFromLevel, betMultiplier } }
  */
 export function GET(request: Request) {
-  return handle(() => {
+  return handle(async () => {
     const url = new URL(request.url);
     const variant = url.searchParams.get('variant') ?? 'v1';
     if (!isQuizVariant(variant)) return jsonError('variant: ожидается v1 или v2', 400);

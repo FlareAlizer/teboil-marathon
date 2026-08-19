@@ -22,7 +22,7 @@ interface BoardData {
 export default function LeaderboardPage() {
   const load = useCallback(async (): Promise<BoardData> => {
     const [board, stats] = await Promise.all([
-      getLeaderboard(LEADERBOARD_SIZE),
+      await getLeaderboard(LEADERBOARD_SIZE),
       getStats(),
     ]);
     return { rows: board.rows, visitors: stats.totalVisitors };

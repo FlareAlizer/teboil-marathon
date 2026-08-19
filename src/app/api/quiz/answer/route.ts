@@ -33,7 +33,7 @@ export function POST(request: Request) {
 
     const bet = parseBool(body.bet, false);
 
-    if (!findPlayerById(playerId)) return jsonError('Участник не найден', 404);
+    if (!await findPlayerById(playerId)) return jsonError('Участник не найден', 404);
 
     const question = findQuizQuestion(variant, questionId);
     if (!question) return jsonError('Вопрос не найден', 404);
@@ -42,7 +42,7 @@ export function POST(request: Request) {
     const answerIndex = parseInt_(body.answerIndex, 'answerIndex', 0, maxIndex);
 
     const activity = quizActivity(variant);
-    const answeredEvents = getActivityEventsToday(playerId, activity);
+    const answeredEvents = await getActivityEventsToday(playerId, activity);
     const alreadyAnswered = answeredEvents.some(
       (e) => e.meta?.questionId === questionId,
     );
@@ -65,7 +65,7 @@ export function POST(request: Request) {
       });
     }
 
-    const saved = addScoreEvent({
+    const saved = await addScoreEvent({
       playerId,
       activity,
       points: outcome.points,

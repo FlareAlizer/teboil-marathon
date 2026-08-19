@@ -10,10 +10,10 @@ export const dynamic = 'force-dynamic';
  * Ответ: { day, totalVisitors, quizPlayers, sportPlayers, totalPoints, byActivity }
  */
 export function GET(request: Request) {
-  return handle(() => {
+  return handle(async () => {
     const url = new URL(request.url);
     const dayParam = url.searchParams.get('day');
     const day = dayParam && /^\d{4}-\d{2}-\d{2}$/.test(dayParam) ? dayParam : todayLocal();
-    return jsonOk(getDayStats(day));
+    return jsonOk(await getDayStats(day));
   });
 }

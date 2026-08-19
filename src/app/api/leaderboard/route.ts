@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic';
  * Ответ: { day, updatedAt, rows: [{ rank, id, nickname, points, firstEventAt }] }
  */
 export function GET(request: Request) {
-  return handle(() => {
+  return handle(async () => {
     const url = new URL(request.url);
     const raw = Number(url.searchParams.get('limit'));
     const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 100) : 10;
@@ -20,7 +20,7 @@ export function GET(request: Request) {
     return jsonOk({
       day,
       updatedAt: new Date().toISOString(),
-      rows: getLeaderboard(limit, day),
+      rows: await getLeaderboard(limit, day),
     });
   });
 }

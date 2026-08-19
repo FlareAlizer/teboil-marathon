@@ -21,3 +21,6 @@ Thumbs.db
 next-env.d.ts
 tsconfig.tsbuildinfo
 .claude/
+
+# Локальный Postgres для разработки
+.pgdata/

@@ -1,8 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // better-sqlite3 — нативный модуль, его нельзя бандлить
-  serverExternalPackages: ['better-sqlite3'],
+  // Драйвер Postgres не бандлим — он открывает сокеты на сервере.
+  serverExternalPackages: ['pg'],
   eslint: { ignoreDuringBuilds: true },
   // Стенд работает локально, оптимизация картинок не нужна
   images: { unoptimized: true },

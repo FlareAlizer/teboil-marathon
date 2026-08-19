@@ -23,7 +23,7 @@ export function POST(request: Request) {
 
     const body = await readJson(request);
     const nickname = normalizeNickname(body.nickname);
-    const result = loginPlayer(nickname);
+    const result = await loginPlayer(nickname);
 
     return jsonOk({
       id: result.player.id,

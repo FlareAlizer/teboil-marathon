@@ -20,7 +20,7 @@ export function GET(_request: Request, ctx: { params: Promise<{ id: string }> })
     const { id: rawId } = await ctx.params;
     const id = parseId(rawId, 'id игрока');
 
-    const player = findPlayerById(id);
+    const player = await findPlayerById(id);
     if (!player) return jsonError('Участник не найден', 404);
 
     return jsonOk({
@@ -28,10 +28,10 @@ export function GET(_request: Request, ctx: { params: Promise<{ id: string }> })
       nickname: player.nickname,
       createdAt: player.createdAt,
       eventDay: player.eventDay,
-      totalPoints: getTotalPoints(id),
-      todayPoints: getTotalPoints(id, todayLocal()),
-      rank: getPlayerRank(id),
-      events: getPlayerEvents(id),
+      totalPoints: await getTotalPoints(id),
+      todayPoints: await getTotalPoints(id, todayLocal()),
+      rank: await getPlayerRank(id),
+      events: await getPlayerEvents(id),
     });
   });
 }

@@ -27,10 +27,10 @@ export function POST(request: Request) {
     const variant = body.variant ?? 'v1';
     if (!isQuizVariant(variant)) return jsonError('variant: ожидается v1 или v2', 400);
 
-    if (!findPlayerById(playerId)) return jsonError('Участник не найден', 404);
+    if (!await findPlayerById(playerId)) return jsonError('Участник не найден', 404);
 
     const activity = quizActivity(variant);
-    const events = getActivityEventsToday(playerId, activity);
+    const events = await getActivityEventsToday(playerId, activity);
 
     const bonusAlreadyGiven = events.some((e) => e.meta?.kind === 'bonus');
     const levelsPassed = [
@@ -49,13 +49,13 @@ export function POST(request: Request) {
         bonus: 0,
         levelsPassed: levelsPassed.sort(),
         alreadyAwarded: bonusAlreadyGiven,
-        totalPoints: getTotalPoints(playerId),
-        todayPoints: getTotalPoints(playerId, todayLocal()),
+        totalPoints: await getTotalPoints(playerId),
+        todayPoints: await getTotalPoints(playerId, todayLocal()),
       });
     }
 
     const bonus = quizCompletionBonus();
-    const saved = addScoreEvent({
+    const saved = await addScoreEvent({
       playerId,
       activity,
       points: bonus,

@@ -34,9 +34,9 @@ export function POST(request: Request) {
 
     if (createdBy === 'admin') await requireAdmin();
 
-    if (!findPlayerById(playerId)) return jsonError('Участник не найден', 404);
+    if (!await findPlayerById(playerId)) return jsonError('Участник не найден', 404);
 
-    const result = addScoreEvent({
+    const result = await addScoreEvent({
       playerId,
       activity,
       points,
@@ -61,7 +61,7 @@ export function DELETE(request: Request) {
     const url = new URL(request.url);
     const id = parseId(url.searchParams.get('id'), 'id');
 
-    const result = deleteScoreEvent(id);
+    const result = await deleteScoreEvent(id);
     if (!result) return jsonError('Начисление не найдено', 404);
 
     return jsonOk(result);
