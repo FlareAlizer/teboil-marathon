@@ -54,6 +54,12 @@ CREATE INDEX IF NOT EXISTS idx_score_events_player  ON score_events(player_id);
 CREATE INDEX IF NOT EXISTS idx_score_events_day     ON score_events(substr(created_at,1,10));
 CREATE INDEX IF NOT EXISTS idx_score_events_activity ON score_events(activity);
 
+-- Сумма баллов игрока за день. Без этого индекса SQLite искал такие суммы
+-- по индексу ДНЯ и на каждого участника перебирал все начисления дня:
+-- список из 200 человек занимал 1.8 с вместо 0.2 с.
+CREATE INDEX IF NOT EXISTS idx_score_events_player_day
+  ON score_events(player_id, substr(created_at,1,10));
+
 CREATE TABLE IF NOT EXISTS visits (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   player_id  INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,

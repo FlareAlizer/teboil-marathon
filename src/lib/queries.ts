@@ -137,18 +137,31 @@ export function searchPlayers(query: string, limit = 20): PlayerSummary[] {
   const day = todayLocal();
   const rows = getDb()
     .prepare(
-      `SELECT p.id,
-              p.nickname,
-              COALESCE((SELECT SUM(points) FROM score_events WHERE player_id = p.id), 0) AS total_points,
+      // Сначала отбираем строки и режем LIMIT, и только потом считаем суммы.
+      // В прежнем варианте суммы баллов считались коррелированными подзапросами
+      // для КАЖДОГО совпадения ещё до отсечения. Теперь их считает только 20
+      // отобранных строк — по индексу, одинаково быстро и при пустом запросе. Поиск — самое частое действие оператора, он идёт
+      // на каждое нажатие клавиши, поэтому разница заметна руками.
+      `WITH found AS (
+         SELECT id, nickname
+           FROM players
+          WHERE nickname LIKE @like ESCAPE '~' COLLATE NOCASE
+          ORDER BY (nickname = @exact COLLATE NOCASE) DESC, nickname COLLATE NOCASE
+          LIMIT @limit
+       )
+       SELECT f.id,
+              f.nickname,
               COALESCE((SELECT SUM(points) FROM score_events
-                        WHERE player_id = p.id AND substr(created_at,1,10) = @day), 0) AS today_points
-         FROM players p
-        WHERE p.nickname LIKE @like ESCAPE '\\' COLLATE NOCASE
-        ORDER BY (p.nickname = @exact COLLATE NOCASE) DESC, p.nickname COLLATE NOCASE
-        LIMIT @limit`,
+                         WHERE player_id = f.id), 0) AS total_points,
+              COALESCE((SELECT SUM(points) FROM score_events
+                         WHERE player_id = f.id
+                           AND substr(created_at,1,10) = @day), 0) AS today_points
+         FROM found f
+        ORDER BY (f.nickname = @exact COLLATE NOCASE) DESC, f.nickname COLLATE NOCASE`,
     )
     .all({
-      like: `%${query.replace(/[\\%_]/g, (m) => `\\${m}`)}%`,
+      // Тильда объявлена в ESCAPE, ей же экранируем спецсимволы шаблона.
+      like: `%${query.replace(/[~%_]/g, (m) => `~${m}`)}%`,
       exact: query,
       day,
       limit,
@@ -171,14 +184,25 @@ export function searchPlayers(query: string, limit = 20): PlayerSummary[] {
 export function listPlayersOfDay(day = todayLocal(), limit = 500): PlayerSummary[] {
   const rows = getDb()
     .prepare(
-      `SELECT p.id, p.nickname,
-              COALESCE((SELECT SUM(points) FROM score_events WHERE player_id = p.id), 0) AS total_points,
+      // Та же схема, что и в searchPlayers: сначала отбираем и режем LIMIT,
+      // потом считаем суммы — иначе они считаются для всех участников дня.
+      // Это вид по умолчанию на вкладке «Баллы», он открывается постоянно.
+      `WITH found AS (
+         SELECT p.id, p.nickname, v.created_at
+           FROM players p
+           JOIN visits v ON v.player_id = p.id AND v.event_day = @day
+          ORDER BY v.created_at DESC
+          LIMIT @limit
+       )
+       SELECT f.id,
+              f.nickname,
               COALESCE((SELECT SUM(points) FROM score_events
-                        WHERE player_id = p.id AND substr(created_at,1,10) = @day), 0) AS today_points
-         FROM players p
-         JOIN visits v ON v.player_id = p.id AND v.event_day = @day
-        ORDER BY v.created_at DESC
-        LIMIT @limit`,
+                         WHERE player_id = f.id), 0) AS total_points,
+              COALESCE((SELECT SUM(points) FROM score_events
+                         WHERE player_id = f.id
+                           AND substr(created_at,1,10) = @day), 0) AS today_points
+         FROM found f
+        ORDER BY f.created_at DESC`,
     )
     .all({ day, limit }) as Array<{
     id: number;
@@ -248,6 +272,8 @@ export function addScoreEvent(input: AddScoreInput): AddScoreResult {
       createdBy: input.createdBy ?? 'auto',
     });
 
+  invalidateBoardCache();
+
   // Игрок пришёл на активность — значит он сегодня был на стенде.
   registerVisit(input.playerId, day);
 
@@ -285,6 +311,7 @@ export function deleteScoreEvent(id: number): DeleteScoreResult | null {
   if (!row) return null;
 
   const info = db.prepare('DELETE FROM score_events WHERE id = ?').run(id);
+  invalidateBoardCache();
   const day = todayLocal();
 
   return {
@@ -330,7 +357,33 @@ export function getActivityEventsToday(
 /* ------------------------------- Лидерборд ------------------------------- */
 
 /** Топ за сегодня: по сумме баллов, при равенстве — кто раньше начал. */
+/* ------------------------------ Кеш лидерборда ---------------------------- */
+
+/**
+ * Лидерборд считается агрегатом по всем начислениям дня и запрашивается чаще
+ * всего: телевизор опрашивает его каждые 10 секунд, плюс он открывается на
+ * экране станций у каждого участника. При очереди на стенде десятки
+ * одновременных запросов считают ровно один и тот же ответ.
+ *
+ * Держим его в памяти процесса на пару секунд и сбрасываем при любой записи
+ * баллов. Поэтому кеш не может показать устаревшие данные после начисления —
+ * он экономит только повторную работу между изменениями.
+ */
+const boardCache = new Map<string, { at: number; rows: LeaderboardRow[] }>();
+const BOARD_TTL_MS = 2000;
+
+/** Любая запись баллов делает кеш недействительным. */
+function invalidateBoardCache(): void {
+  boardCache.clear();
+}
+
 export function getLeaderboard(limit = 10, day = todayLocal()): LeaderboardRow[] {
+  const key = day;
+  const hit = boardCache.get(key);
+  if (hit && Date.now() - hit.at < BOARD_TTL_MS && hit.rows.length >= limit) {
+    return hit.rows.slice(0, limit);
+  }
+
   const rows = getDb()
     .prepare(
       `SELECT p.id,
@@ -341,7 +394,7 @@ export function getLeaderboard(limit = 10, day = todayLocal()): LeaderboardRow[]
          JOIN players p ON p.id = se.player_id
         WHERE substr(se.created_at,1,10) = @day
         GROUP BY p.id, p.nickname
-        ORDER BY points DESC, first_at ASC
+        ORDER BY points DESC, first_at ASC, p.id ASC
         LIMIT @limit`,
     )
     .all({ day, limit }) as Array<{
@@ -351,20 +404,43 @@ export function getLeaderboard(limit = 10, day = todayLocal()): LeaderboardRow[]
     first_at: string;
   }>;
 
-  return rows.map((r, i) => ({
+  const board = rows.map((r, i) => ({
     rank: i + 1,
     id: r.id,
     nickname: r.nickname,
     points: r.points,
     firstEventAt: r.first_at,
   }));
+  boardCache.set(key, { at: Date.now(), rows: board });
+  return board;
 }
 
 /** Позиция конкретного игрока в сегодняшнем зачёте (или null, если без баллов). */
 export function getPlayerRank(playerId: number, day = todayLocal()): number | null {
-  const board = getLeaderboard(1000, day);
-  const found = board.find((r) => r.id === playerId);
-  return found ? found.rank : null;
+  // Раньше здесь строился ВЕСЬ лидерборд на 1000 человек, чтобы найти в нём
+  // одну строку. Экран станций открывает каждый участник, поэтому на полной
+  // базе это была самая дорогая операция дня. Теперь — один запрос: считаем,
+  // сколько человек стоит выше. Порядок тот же, что в лидерборде: больше
+  // баллов, а при равенстве — кто раньше начал.
+  const row = getDb()
+    .prepare(
+      `WITH totals AS (
+         SELECT player_id, SUM(points) AS pts, MIN(created_at) AS first_at
+           FROM score_events
+          WHERE substr(created_at,1,10) = @day
+          GROUP BY player_id
+       ),
+       me AS (SELECT pts, first_at FROM totals WHERE player_id = @playerId)
+       SELECT (SELECT COUNT(*) FROM totals t, me
+                WHERE t.pts > me.pts
+                   OR (t.pts = me.pts AND t.first_at < me.first_at)
+                   OR (t.pts = me.pts AND t.first_at = me.first_at
+                       AND t.player_id < @playerId)) + 1 AS rank,
+              (SELECT COUNT(*) FROM me) AS found`,
+    )
+    .get({ playerId, day }) as { rank: number; found: number } | undefined;
+
+  return row && row.found > 0 ? row.rank : null;
 }
 
 /* -------------------------------- Статистика ------------------------------ */
