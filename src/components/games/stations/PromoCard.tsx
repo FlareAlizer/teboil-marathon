@@ -111,17 +111,24 @@ function CartImage() {
  */
 function QrPanel() {
   return (
-    <div className="flex w-[104px] shrink-0 flex-col sm:w-[132px] items-center justify-center gap-2 border-2 border-teboil-blue bg-teboil-white p-3">
+    <div
+      className={cn(
+        'flex shrink-0 flex-col items-center justify-center gap-3',
+        'border-2 border-teboil-blue bg-teboil-white p-4',
+        // На телефоне блок встаёт под плашками во всю ширину, поэтому код
+        // получается крупным. Прижатый сбоку он был бы размером с ноготь:
+        // сканировать такой неудобно, а это единственное, зачем он нужен.
+        'w-full sm:w-[220px]',
+      )}
+    >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src="/img/qr-teboil.jpg"
         alt="QR-код Teboil"
-        className="h-auto w-full"
+        className="h-auto w-full max-w-[240px]"
       />
-      {/* Без подписи участник не понимает, что это за квадрат и зачем он.
-          Заодно она заполняет колонку, которая иначе выглядит полупустой
-          рядом с двумя плашками. */}
-      <span className="text-center text-[11px] font-medium leading-tight text-teboil-blue">
+      {/* Без подписи участник не понимает, что это за квадрат и зачем он. */}
+      <span className="text-center text-[13px] font-medium leading-tight text-teboil-blue">
         Наведи камеру телефона
       </span>
     </div>
@@ -149,9 +156,14 @@ export function PromoCards({
   className?: string;
 }) {
   return (
-    <div className={cn('flex items-stretch gap-3', className)}>
-      {/* Плашки занимают всю оставшуюся ширину, QR стоит справа от обеих
-          и растягивается на их общую высоту. */}
+    <div
+      className={cn(
+        // Узкий экран: плашки, под ними крупный код. Широкий: код справа
+        // от обеих, во всю их высоту.
+        'flex flex-col gap-3 sm:flex-row sm:items-stretch',
+        className,
+      )}
+    >
       <div className="flex min-w-0 flex-1 flex-col gap-3">
         <PromoCard
           tone="red"
