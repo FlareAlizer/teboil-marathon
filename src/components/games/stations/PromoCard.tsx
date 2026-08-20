@@ -1,6 +1,13 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 
+/**
+ * Адреса от заказчика. Держим здесь, а не в вызывающих экранах: карточки
+ * стоят в двух местах, и разъехавшиеся ссылки заметили бы не сразу.
+ */
+export const SHOP_URL = 'https://shop.teboil.ru';
+export const LOYALTY_URL = 'https://lk.teboil.ru/applink/azs/quwnBtYP';
+
 export type PromoTone = 'red' | 'blue';
 
 /**
@@ -8,10 +15,9 @@ export type PromoTone = 'red' | 'blue';
  * «Программа лояльности» (синяя). Заголовок всегда синий, а подпись —
  * в цвет рамки, как в макете.
  *
- * Ссылок пока нет: заказчик подтвердил, что блоки верстаются как в макете,
- * но никуда не ведут, а выдумывать адреса Teboil нельзя. Поэтому есть
- * необязательный проп `href` — когда адрес появится, карточка становится
- * ссылкой одной строкой, без правки вёрстки.
+ * Адрес передаётся пропсом `href` и по умолчанию берётся из констант выше.
+ * Он необязателен: без него карточка остаётся обычным блоком, а не ссылкой,
+ * которая никуда не ведёт.
  *
  * Картинка передаётся пропсом `illustration`, а не зашита внутрь: у карточки
  * магазина в макете справа стоит тележка, у карточки лояльности картинки нет.
@@ -49,7 +55,7 @@ export function PromoCard({
       {illustration && (
         <span
           aria-hidden
-          className="ml-3 flex w-[120px] shrink-0 items-center justify-end"
+          className="ml-3 flex w-[72px] shrink-0 items-center justify-end sm:w-[120px]"
         >
           {illustration}
         </span>
@@ -63,8 +69,8 @@ export function PromoCard({
     className,
   );
 
-  // Пока адреса нет — это просто блок с текстом. Делать из него кнопку,
-  // которая никуда не ведёт, значит обманывать пользователя.
+  // Без адреса — просто блок с текстом. Делать из него кнопку, которая
+  // никуда не ведёт, значит обманывать участника.
   if (!href) {
     return <div className={shell}>{content}</div>;
   }
@@ -88,8 +94,37 @@ function CartImage() {
     <img
       src="/img/promo-cart.png"
       alt=""
-      className="h-auto w-full max-w-[120px]"
+      className="h-auto w-full max-w-[72px] sm:max-w-[120px]"
     />
+  );
+}
+
+/**
+ * QR-код Teboil справа от промо-плашек.
+ *
+ * Рамка синяя, как у карточки лояльности, и сам код прижат по центру своей
+ * колонки — так пара плашек и квадрат читаются одним блоком, а не двумя
+ * случайно поставленными рядом элементами.
+ *
+ * Ширина задана в тех же единицах, что у плашек, поэтому на узком экране
+ * телефона колонка сжимается вместе с ними, а не выдавливает текст.
+ */
+function QrPanel() {
+  return (
+    <div className="flex w-[104px] shrink-0 flex-col sm:w-[132px] items-center justify-center gap-2 border-2 border-teboil-blue bg-teboil-white p-3">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/img/qr-teboil.jpg"
+        alt="QR-код Teboil"
+        className="h-auto w-full"
+      />
+      {/* Без подписи участник не понимает, что это за квадрат и зачем он.
+          Заодно она заполняет колонку, которая иначе выглядит полупустой
+          рядом с двумя плашками. */}
+      <span className="text-center text-[11px] font-medium leading-tight text-teboil-blue">
+        Наведи камеру телефона
+      </span>
+    </div>
   );
 }
 
@@ -104,8 +139,8 @@ function CartImage() {
  */
 export function PromoCards({
   illustration = <CartImage />,
-  shopHref,
-  loyaltyHref,
+  shopHref = SHOP_URL,
+  loyaltyHref = LOYALTY_URL,
   className,
 }: {
   illustration?: ReactNode;
@@ -114,32 +149,40 @@ export function PromoCards({
   className?: string;
 }) {
   return (
-    <div className={cn('space-y-3', className)}>
-      <PromoCard
-        tone="red"
-        title={
-          <>
-            Онлайн
-            <br />
-            магазин
-          </>
-        }
-        note="Масла и автохимия с доставкой"
-        illustration={illustration}
-        href={shopHref}
-      />
-      <PromoCard
-        tone="blue"
-        title={
-          <>
-            Программа
-            <br />
-            лояльности
-          </>
-        }
-        note="Баллы за каждый литр"
-        href={loyaltyHref}
-      />
+    <div className={cn('flex items-stretch gap-3', className)}>
+      {/* Плашки занимают всю оставшуюся ширину, QR стоит справа от обеих
+          и растягивается на их общую высоту. */}
+      <div className="flex min-w-0 flex-1 flex-col gap-3">
+        <PromoCard
+          tone="red"
+          title={
+            <>
+              Онлайн
+              <br />
+              магазин
+            </>
+          }
+          note="Масла и автохимия с доставкой"
+          illustration={illustration}
+          href={shopHref}
+          className="flex-1"
+        />
+        <PromoCard
+          tone="blue"
+          title={
+            <>
+              Программа
+              <br />
+              лояльности
+            </>
+          }
+          note="Баллы за каждый литр"
+          href={loyaltyHref}
+          className="flex-1"
+        />
+      </div>
+
+      <QrPanel />
     </div>
   );
 }
