@@ -30,7 +30,7 @@ export function QuizPickScreen({
       <div className="space-y-5">
         <PickPlate
           title="Для новичков"
-          note="8 рубрик"
+          note="9 рубрик"
           badge="1"
           badgeTone="red"
           onClick={() => onPick('v1')}

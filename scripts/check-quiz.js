@@ -3,7 +3,7 @@
  *
  *   node scripts/check-quiz.js [путь-к-src/data]
  *
- * Структура: quiz1 = 72 вопроса (8 рубрик x 9), quiz2 = 21 (3 уровня x 7, поле level).
+ * Структура: quiz1 = 81 вопрос (9 рубрик x 9), quiz2 = 21 (3 уровня x 7, поле level).
  * У каждого вопроса ровно 4 варианта, correctIndex — целое 0..3, без пустых строк и дублей id.
  *
  * Сверка ответов идёт ПО ТЕКСТУ, а не по позиции: для каждого вопроса из источника задан
@@ -100,6 +100,16 @@ const KEY1 = [
   ['буква W', 'Winter'],
   ['FE в названии', 'Fuel Economy'],
   ['межсервисный интервал', '10 000'],
+  // Рубрика 9. Полный бак
+  ['виды бензина продаются на АЗС', 'АИ-92'],
+  ['нельзя делать на АЗС', 'Курить'],
+  ['для дизельных двигателей', 'Дизельное'],
+  ['цифра в марке бензина', 'Октановое число'],
+  ['добавляют в топливо для улучшения', 'Присадки'],
+  ['премиальное/улучшенное/брендированное', 'улучшенным пакетом присадок'],
+  ['уровни программы лояльности', 'Агат'],
+  ['отвечает октановое число', 'детонации'],
+  ['октановым числом ниже рекомендованного', 'детонации'],
 ];
 
 /* Эталон quiz2 — из docs/source/quiz2-levels.md. Русские А/Б/В/Г: Б=1, В=2 — частый источник ошибки. */
@@ -212,11 +222,11 @@ function verify(name, qs, key) {
 const q1 = load('quiz1.json');
 if (q1) {
   const qs = flatten(q1);
-  structural('quiz1', qs, 72);
+  structural('quiz1', qs, 81);
   const byTopic = {};
   qs.forEach((q) => (byTopic[q.__topic] = (byTopic[q.__topic] || 0) + 1));
   console.log('Рубрики:', Object.entries(byTopic).map(([k, v]) => `${k} (${v})`).join(', '));
-  if (Object.keys(byTopic).length !== 8) add('CRIT', `quiz1: рубрик ${Object.keys(byTopic).length}, должно быть 8`);
+  if (Object.keys(byTopic).length !== 9) add('CRIT', `quiz1: рубрик ${Object.keys(byTopic).length}, должно быть 9`);
   for (const [t, n] of Object.entries(byTopic)) if (n !== 9) add('CRIT', `quiz1 / «${t}»: ${n} вопросов вместо 9`);
   verify('quiz1', qs, KEY1);
 }
