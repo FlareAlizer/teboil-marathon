@@ -6,7 +6,15 @@ import { displayName } from '@/lib/validation';
 import { SkewedPlate, skewFor } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
-export const LEADERBOARD_SIZE = 10;
+/** Сколько мест показывает телевизор. */
+export const LEADERBOARD_SIZE = 20;
+
+/**
+ * Двадцать мест не помещаются в один столбец: строка стала бы вдвое ниже, а
+ * вместе с ней и шрифт — телевизор смотрят из другого конца площадки. Поэтому
+ * места идут в две колонки по десять, высота строки прежняя.
+ */
+const COLUMN_SIZE = LEADERBOARD_SIZE / 2;
 
 export type LeaderboardEntry = Pick<LeaderboardRow, 'rank' | 'nickname' | 'points'>;
 
@@ -46,6 +54,9 @@ const EMPTY = {
  *     текст внутри готовых узлов, DOM не переставляется и ничего не мигает.
  *  3. Сетка задаёт равные доли высоты, колонки места и баллов фиксированы,
  *     цифры моноширинные — смена «9» на «10» не сдвигает вёрстку.
+ *
+ * Кегль ограничен и по высоте, и по ширине (`min(...)`): в колонке вдвое уже
+ * прежней ник иначе упирался бы в баллы и обрезался у всех подряд.
  */
 export function LeaderboardRows({ rows }: { rows: readonly LeaderboardEntry[] }) {
   const byRank = new Map(rows.map((row) => [row.rank, row]));
@@ -53,8 +64,11 @@ export function LeaderboardRows({ rows }: { rows: readonly LeaderboardEntry[] })
 
   return (
     <div
-      className="grid h-full w-full gap-[1vh]"
-      style={{ gridTemplateRows: `repeat(${LEADERBOARD_SIZE}, minmax(0, 1fr))` }}
+      className="grid h-full w-full grid-flow-col gap-x-[2vw] gap-y-[1vh]"
+      style={{
+        gridTemplateRows: `repeat(${COLUMN_SIZE}, minmax(0, 1fr))`,
+        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+      }}
     >
       {slots.map((rank) => {
         const entry = byRank.get(rank);
@@ -67,12 +81,13 @@ export function LeaderboardRows({ rows }: { rows: readonly LeaderboardEntry[] })
             tone={style.tone}
             skewX={ROW_SKEW}
             className="min-h-0"
-            contentClassName="gap-[2vw] px-[3vw]"
+            contentClassName="gap-[1.2vw] px-[1.6vw]"
           >
             <span
               className={cn(
                 'flex aspect-square h-[64%] shrink-0 items-center justify-center',
-                'bg-teboil-white font-display text-[4.2vh] font-black tabular-nums',
+                'bg-teboil-white font-display font-black tabular-nums',
+                'text-[min(3.4vh,1.7vw)]',
                 style.badge,
               )}
             >
@@ -81,16 +96,18 @@ export function LeaderboardRows({ rows }: { rows: readonly LeaderboardEntry[] })
 
             <span
               className={cn(
-                'min-w-0 flex-1 truncate font-display text-[5.4vh] font-black leading-none',
+                'min-w-0 flex-1 truncate font-display font-black leading-none',
+                'text-[min(4.2vh,2.1vw)]',
                 style.text,
               )}
             >
-              {empty ? '—' : truncateNickname(displayName(entry.nickname), 20)}
+              {empty ? '—' : truncateNickname(displayName(entry.nickname), 16)}
             </span>
 
             <span
               className={cn(
-                'w-[22%] shrink-0 text-right font-display text-[5.4vh] font-black leading-none tabular-nums',
+                'w-[22%] shrink-0 text-right font-display font-black leading-none tabular-nums',
+                'text-[min(4.2vh,2.1vw)]',
                 style.text,
               )}
             >

@@ -12,6 +12,13 @@ export const SCORING = {
     levelPoints: { 1: 10, 2: 20, 3: 30 } as Record<1 | 2 | 3, number>,
     /** Бонус за прохождение всех трёх уровней. */
     allLevelsBonus: 40,
+    /**
+     * Штраф за неверный ответ — доля от цены уровня: −5 / −10 / −15.
+     * Ошибка больше не заканчивает игру, поэтому цена у неё должна быть,
+     * иначе выгодно тыкать наугад. Итог дня при этом не уходит в минус —
+     * ограничение стоит в /api/quiz/answer, где известна сумма за день.
+     */
+    wrongAnswerShare: 0.5,
     /** Ставка «призами» доступна начиная с этого уровня. */
     betFromLevel: 2 as 2,
     /** Во сколько раз ставка увеличивает баллы уровня при выигрыше. */
@@ -59,12 +66,20 @@ export interface QuizAnswerOutcome {
   betApplied: boolean;
 }
 
+/** Сколько снимается за неверный ответ на этом уровне (положительное число). */
+export function quizWrongAnswerPenalty(level: QuizLevel): number {
+  return Math.round(SCORING.quiz.levelPoints[level] * SCORING.quiz.wrongAnswerShare);
+}
+
 /**
  * Баллы за один ответ в квизе с рулеткой.
  *
+ * Верный ответ приносит баллы уровня, неверный — снимает половину этой суммы:
+ * игра после ошибки продолжается, но ответ наугад невыгоден.
+ *
  * Механика риска: на уровнях 2 и 3 участник может «поставить» призы.
- * Выигрыш — баллы уровня удваиваются. Проигрыш — ПРИЗЫ сгорают,
- * но уже НАБРАННЫЕ БАЛЛЫ остаются (мы просто не начисляем баллы за уровень).
+ * Выигрыш — баллы уровня удваиваются. Проигрыш — ПРИЗЫ сгорают.
+ * (В текущем потоке ставка не предлагается, клиент всегда шлёт bet: false.)
  */
 export function quizAnswerPoints(
   level: QuizLevel,
@@ -73,7 +88,11 @@ export function quizAnswerPoints(
 ): QuizAnswerOutcome {
   const betApplied = bet && canBet(level);
   if (!correct) {
-    return { points: 0, prizesLost: betApplied, betApplied };
+    return {
+      points: -quizWrongAnswerPenalty(level),
+      prizesLost: betApplied,
+      betApplied,
+    };
   }
   const base = SCORING.quiz.levelPoints[level];
   return {

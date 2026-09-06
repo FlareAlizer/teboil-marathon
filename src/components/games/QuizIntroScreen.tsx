@@ -3,6 +3,11 @@
 import type { QuizVariant } from '@/lib/types';
 import { cn } from '@/lib/cn';
 import { QuizButton, QuizScreen, RowPlate, ScreenTitle } from './quiz-ui';
+import {
+  INTRO_DIFFICULTY_LABELS,
+  LEVEL_TONES,
+  levelNote,
+} from './quiz-levels';
 import type { QuizData } from './game-api';
 
 /**
@@ -15,26 +20,11 @@ import type { QuizData } from './game-api';
  * из `/api/quiz`, чтобы экран не разошёлся с тем, что реально начислит сервер.
  */
 
-/** Подписи сложности для первого квиза (макет 37:64). */
-const DIFFICULTY_LABELS: Record<1 | 2 | 3, string> = {
-  1: 'Легкие',
-  2: 'Средние',
-  3: 'Сложные',
-};
-
-/** Цвет числа баллов растёт вместе со сложностью — как в макете. */
-const DIFFICULTY_COLORS: Record<1 | 2 | 3, string> = {
-  1: 'text-teboil-correct',
-  2: 'text-teboil-blue-60',
-  3: 'text-teboil-red',
-};
-
-/** Названия уровней второго квиза (макет 37:137). */
-const LEVEL_NOTES: Record<1 | 2 | 3, string> = {
-  1: 'Разминка',
-  2: 'Круизная скорость',
-  3: 'Красная зона тахометра',
-};
+/*
+ * Подписи и цвета уровней лежат в `quiz-levels`: те же цвета стоят на экране
+ * выбора уровня и на самом вопросе, и разъехавшись здесь они сломали бы
+ * цветовую метку целиком.
+ */
 
 export function QuizIntroScreen({
   variant,
@@ -59,7 +49,7 @@ export function QuizIntroScreen({
         <>
           <ScreenTitle
             title={`Квизы. ${themeCount} рубрик о беге`}
-            subtitle="Выбирай рубрику и отвечай: легкие, средние и сложные вопросы. Каждый верный ответ приносит очки."
+            subtitle="Выбирай уровень и рубрику. Верный ответ приносит баллы, неверный — снимает половину: игра на этом не заканчивается."
           />
           <DifficultyCards quiz={quiz} />
         </>
@@ -67,7 +57,7 @@ export function QuizIntroScreen({
         <>
           <ScreenTitle
             title="Гонка чемпионов"
-            subtitle="Твой организм — двигатель, трасса — марафон."
+            subtitle="Твой организм — двигатель, трасса — марафон. Верный ответ приносит баллы, неверный — снимает половину."
           />
           <LevelPlates quiz={quiz} />
         </>
@@ -97,12 +87,12 @@ function DifficultyCards({ quiz }: { quiz: QuizData }) {
               системный «текст на белом» (5.9:1): подпись остаётся
               подчинённой числу, но её видно. */}
           <span className="font-display text-kiosk-sm font-bold text-teboil-muted">
-            {DIFFICULTY_LABELS[level.level]}
+            {INTRO_DIFFICULTY_LABELS[level.level]}
           </span>
           <span
             className={cn(
               'mt-1 font-display text-kiosk-lg font-bold',
-              DIFFICULTY_COLORS[level.level],
+              LEVEL_TONES[level.level].textOnLight,
             )}
           >
             +{quiz.rules.levelPoints[level.level]}
@@ -123,7 +113,7 @@ function LevelPlates({ quiz }: { quiz: QuizData }) {
             badge={level.level}
             badgeTone={level.level === 3 ? 'red' : 'pale'}
             title={level.title}
-            note={LEVEL_NOTES[level.level]}
+            note={levelNote(quiz.variant, level.level)}
             trailing={
               <span
                 className={cn(

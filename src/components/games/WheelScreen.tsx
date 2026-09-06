@@ -21,12 +21,15 @@ export function WheelScreen({
   sectors,
   onPick,
   onChooseManually,
+  onBack,
   onStations,
 }: {
   points: number;
   sectors: WheelSector[];
   onPick: (sector: WheelSector) => void;
   onChooseManually: () => void;
+  /** Назад к выбору уровня: уровень выбирается до темы и может быть выбран не тот. */
+  onBack: () => void;
   onStations: () => void;
 }) {
   const wheelRef = useRef<SpinWheelHandle>(null);
@@ -85,9 +88,14 @@ export function WheelScreen({
         )}
 
         {!result && (
-          <QuizButton tone="pale" onClick={onChooseManually} disabled={spinning}>
-            Выбрать тему
-          </QuizButton>
+          <>
+            <QuizButton tone="pale" onClick={onChooseManually} disabled={spinning}>
+              Выбрать тему
+            </QuizButton>
+            <QuizButton tone="pale" onClick={onBack} disabled={spinning}>
+              Сменить уровень
+            </QuizButton>
+          </>
         )}
 
         <QuizButton tone="pale" onClick={onStations} disabled={spinning}>

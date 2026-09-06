@@ -115,8 +115,19 @@ export interface QuizLevelView {
 export interface QuizRules {
   levelPoints: Record<1 | 2 | 3, number>;
   allLevelsBonus: number;
+  /** Доля цены уровня, которая снимается за неверный ответ. */
+  wrongAnswerShare: number;
   betFromLevel: number;
   betMultiplier: number;
+}
+
+/**
+ * Сколько снимется за ошибку на этом уровне. Считается из правил сервера,
+ * а не своей константой: расхождение означало бы, что участнику обещают
+ * одно, а списывают другое.
+ */
+export function penaltyFor(rules: QuizRules, level: 1 | 2 | 3): number {
+  return Math.round(rules.levelPoints[level] * rules.wrongAnswerShare);
 }
 
 export interface QuizData {
@@ -124,10 +135,17 @@ export interface QuizData {
   title: string;
   levels: QuizLevelView[];
   rules: QuizRules;
+  /**
+   * Вопросы, на которые участник уже отвечал сегодня. Квиз исключает их из
+   * выборки: повторный заход должен начинаться с новых вопросов, а за
+   * повторный ответ сервер всё равно не начислит баллы.
+   */
+  answeredIds: string[];
 }
 
-export function getQuiz(variant: QuizVariant): Promise<QuizData> {
-  return request<QuizData>(`/api/quiz?variant=${variant}`);
+export function getQuiz(variant: QuizVariant, playerId?: number): Promise<QuizData> {
+  const query = playerId ? `&playerId=${playerId}` : '';
+  return request<QuizData>(`/api/quiz?variant=${variant}${query}`);
 }
 
 export interface QuizAnswerResponse {

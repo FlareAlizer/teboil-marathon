@@ -1,19 +1,21 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { QuizVariant } from '@/lib/types';
 import type { WheelSector } from './SpinWheel';
 import { QuizButton, QuizScreen } from './quiz-ui';
 import { QuizIntroScreen } from './QuizIntroScreen';
+import { LevelPickScreen } from './LevelPickScreen';
 import { WheelScreen } from './WheelScreen';
 import { ThemePickScreen } from './ThemePickScreen';
 import { QuestionScreen } from './QuestionScreen';
-import { StakeScreen, OutcomeScreen } from './QuizOutcome';
+import { OutcomeScreen, TopicDoneScreen } from './QuizOutcome';
 import {
   answerQuiz,
   completeQuiz,
   errorText,
   getQuiz,
+  penaltyFor,
   type CurrentPlayer,
   type QuizAnswerResponse,
   type QuizData,
@@ -23,10 +25,21 @@ import {
 /**
  * Квиз с рулеткой — главный магнит стенда.
  *
- * Три уровня подряд: Новичок → Любитель → Профи. Перед каждым уровнем тема
- * выбирается заново — колесом или руками из списка, — и показываются только
- * те темы, где на этом уровне ещё остались вопросы, так что мёртвых секторов
- * не бывает.
+ * Путь участника: выбрать уровень → выбрать тему (колесом или руками) →
+ * ответить на все вопросы этой темы → итог рубрики → снова тема или другой
+ * уровень.
+ *
+ * Три правила, которые определяют этот файл:
+ *
+ *  1. Неверный ответ НЕ заканчивает игру. Участник стенда пришёл играть, а не
+ *     сдавать экзамен: после ошибки он спокойно доигрывает оставшиеся вопросы
+ *     рубрики. Цена у ошибки при этом есть — половина баллов уровня, — иначе
+ *     выгодно тыкать наугад. Считает это сервер.
+ *  2. Уровень выбирает участник, а не сценарий. Поэтому и колесо, и список тем
+ *     собираются из вопросов ВЫБРАННОГО уровня.
+ *  3. Повторный заход даёт другие вопросы: уже отвеченные сегодня приходят с
+ *     сервера в `answeredIds` и исключаются, порядок тем перемешивается, а
+ *     вопрос внутри темы берётся случайный.
  *
  * Правильность ответа и баллы считает ТОЛЬКО сервер: экран не знает верного
  * варианта, пока участник не ответил, и не ведёт собственной арифметики баллов,
@@ -39,12 +52,20 @@ import {
 type Phase =
   | 'loading'
   | 'intro'
+  | 'levelPick'
   | 'wheel'
   | 'themes'
   | 'question'
-  | 'stake'
-  | 'won'
-  | 'lost';
+  | 'topicDone';
+
+/** Итог текущей рубрики — то, что показывается на экране между темами. */
+interface TopicStats {
+  asked: number;
+  correct: number;
+  earned: number;
+}
+
+const EMPTY_TOPIC: TopicStats = { asked: 0, correct: 0, earned: 0 };
 
 export function RouletteQuiz({
   variant,
@@ -62,43 +83,68 @@ export function RouletteQuiz({
   const [error, setError] = useState<string | null>(null);
 
   const [level, setLevel] = useState<1 | 2 | 3>(1);
+  const [theme, setTheme] = useState<string | null>(null);
   const [question, setQuestion] = useState<QuizQuestionView | null>(null);
   const [askedIds, setAskedIds] = useState<string[]>([]);
   const [chosen, setChosen] = useState<number | null>(null);
   const [result, setResult] = useState<QuizAnswerResponse | null>(null);
   const [busy, setBusy] = useState(false);
 
-  /** Заработанные призы: по одному за пройденный уровень. Сгорают при проигрыше со ставкой. */
-  const [prizes, setPrizes] = useState(0);
-  /** Призы поставлены на текущий уровень. */
-  const [staked, setStaked] = useState(false);
+  /** Размер рубрики на момент её выбора — для полосы прогресса. */
+  const [topicTotal, setTopicTotal] = useState(0);
+  const [topic, setTopic] = useState<TopicStats>(EMPTY_TOPIC);
+  /** Баллы за весь заход и бонус за три уровня, если он выдан именно сейчас. */
   const [points, setPoints] = useState(0);
   const [bonus, setBonus] = useState(0);
+
+  /**
+   * Порядок тем на колесе. Перемешивается один раз при загрузке: если тасовать
+   * его на каждом рендере, сектора прыгали бы прямо во время вращения, а если
+   * не тасовать вовсе — второй заход начинался бы с тех же тем.
+   */
+  const themeOrder = useRef(new Map<string, number>());
 
   /** Вынесено из эффекта, чтобы этим же путём работала кнопка «Попробовать снова». */
   const loadQuiz = useCallback(async () => {
     setError(null);
     try {
-      const data = await getQuiz(variant);
+      const data = await getQuiz(variant, player.id);
+      themeOrder.current = shuffledOrder(
+        data.levels.flatMap((l) => l.questions.map((q) => q.theme)),
+      );
       setQuiz(data);
+      setAskedIds(data.answeredIds ?? []);
       setPhase('intro');
     } catch (e) {
       setError(errorText(e));
     }
-  }, [variant]);
+  }, [variant, player.id]);
 
   useEffect(() => {
     void loadQuiz();
   }, [loadQuiz]);
 
-  /** Ещё не заданные вопросы текущего уровня. */
-  const available = useMemo(() => {
-    if (!quiz) return [];
-    const lvl = quiz.levels.find((l) => l.level === level);
-    return (lvl?.questions ?? []).filter((q) => !askedIds.includes(q.id));
-  }, [quiz, level, askedIds]);
+  /** Ещё не отвеченные вопросы — по уровням. */
+  const openByLevel = useMemo(() => {
+    const out: Record<1 | 2 | 3, QuizQuestionView[]> = { 1: [], 2: [], 3: [] };
+    for (const lvl of quiz?.levels ?? []) {
+      out[lvl.level] = lvl.questions.filter((q) => !askedIds.includes(q.id));
+    }
+    return out;
+  }, [quiz, askedIds]);
 
-  /** Темы, доступные на этом уровне: и для колеса, и для списка. */
+  const available = openByLevel[level];
+
+  const levelCounts = useMemo(
+    () => ({
+      1: openByLevel[1].length,
+      2: openByLevel[2].length,
+      3: openByLevel[3].length,
+    }),
+    [openByLevel],
+  );
+
+  /** Темы выбранного уровня, где ещё остались вопросы: и для колеса, и для списка. */
   const sectors: WheelSector[] = useMemo(() => {
     const seen = new Set<string>();
     const out: WheelSector[] = [];
@@ -107,23 +153,49 @@ export function RouletteQuiz({
       seen.add(q.theme);
       out.push({ id: q.theme, label: q.theme });
     }
-    return out;
+    return out.sort(
+      (a, b) =>
+        (themeOrder.current.get(a.id) ?? 0) - (themeOrder.current.get(b.id) ?? 0),
+    );
   }, [available]);
 
-  /** Тема выбрана — колесом или руками. Вопрос из неё берём случайный. */
-  const pickQuestion = useCallback(
+  /** Случайный вопрос из указанной темы текущего уровня. */
+  const takeQuestion = useCallback(
+    (themeId: string): QuizQuestionView | null => {
+      const pool = available.filter((q) => q.theme === themeId);
+      if (pool.length === 0) return null;
+      return pool[Math.floor(Math.random() * pool.length)] ?? pool[0];
+    },
+    [available],
+  );
+
+  /** Тема выбрана — колесом или руками. Рубрика начинается заново. */
+  const startTopic = useCallback(
     (sector: WheelSector) => {
-      const pool = available.filter((q) => q.theme === sector.id);
-      const picked = pool[Math.floor(Math.random() * pool.length)] ?? pool[0];
+      const picked = takeQuestion(sector.id);
       if (!picked) return;
+
+      setTheme(sector.id);
+      setTopicTotal(available.filter((q) => q.theme === sector.id).length);
+      setTopic(EMPTY_TOPIC);
+      setBonus(0);
       setQuestion(picked);
       setChosen(null);
       setResult(null);
       setError(null);
       setPhase('question');
     },
-    [available],
+    [available, takeQuestion],
   );
+
+  function pickLevel(next: 1 | 2 | 3) {
+    setLevel(next);
+    setTheme(null);
+    setQuestion(null);
+    setTopic(EMPTY_TOPIC);
+    setBonus(0);
+    setPhase('wheel');
+  }
 
   async function answer(index: number) {
     if (!question || busy || chosen !== null) return; // защита от двойного тапа
@@ -135,15 +207,21 @@ export function RouletteQuiz({
         variant,
         questionId: question.id,
         answerIndex: index,
-        bet: staked,
+        // Ставки в потоке больше нет: уровень выбирает участник, а сгорающие
+        // призы противоречили бы правилу «ошибка не заканчивает игру».
+        bet: false,
       });
       setResult(res);
       setAskedIds((prev) => [...prev, question.id]);
       setPoints((p) => p + res.points);
+      setTopic((t) => ({
+        asked: t.asked + 1,
+        correct: t.correct + (res.correct ? 1 : 0),
+        earned: t.earned + res.points,
+      }));
       if (res.totalPoints !== null && res.todayPoints !== null) {
         onPoints(res.totalPoints, res.todayPoints);
       }
-      if (!res.correct && res.prizesLost) setPrizes(0);
     } catch (e) {
       setError(errorText(e));
       setChosen(null);
@@ -152,43 +230,39 @@ export function RouletteQuiz({
     }
   }
 
+  /**
+   * «Далее» после ответа — верного или нет. Пока в рубрике есть вопросы,
+   * ведём к следующему; когда кончились, показываем итог рубрики и просим
+   * сервер проверить бонус за все три уровня.
+   */
   async function next() {
-    if (busy || !result) return;
+    if (busy || !result || !theme) return;
+
+    const following = takeQuestion(theme);
+    if (following) {
+      setQuestion(following);
+      setChosen(null);
+      setResult(null);
+      setError(null);
+      return;
+    }
+
     setBusy(true);
     try {
-      if (!result.correct) {
-        setPhase('lost');
-        return;
-      }
-      const wonPrizes = prizes + 1;
-      setPrizes(wonPrizes);
-      setStaked(false);
-
-      if (level === 3) {
-        const done = await completeQuiz(player.id, variant);
+      const done = await completeQuiz(player.id, variant);
+      if (done.awarded) {
         setBonus(done.bonus);
-        if (done.awarded) {
-          setPoints((p) => p + done.bonus);
-          onPoints(done.totalPoints, done.todayPoints);
-        }
-        setPhase('won');
-        return;
+        setPoints((p) => p + done.bonus);
+        onPoints(done.totalPoints, done.todayPoints);
       }
-      setPhase('stake');
-    } catch (e) {
-      setError(errorText(e));
+    } catch {
+      // Бонус — приятное дополнение, а не условие продолжения игры: если
+      // запрос не прошёл, итог рубрики всё равно должен открыться. Сервер
+      // выдаст бонус на следующей рубрике, он считается по журналу.
     } finally {
       setBusy(false);
+      setPhase('topicDone');
     }
-  }
-
-  function toNextLevel(withStake: boolean) {
-    setStaked(withStake);
-    setLevel((l) => (l === 1 ? 2 : 3));
-    setQuestion(null);
-    setChosen(null);
-    setResult(null);
-    setPhase('wheel');
   }
 
   const score = player.todayPoints;
@@ -222,7 +296,15 @@ export function RouletteQuiz({
     );
   }
 
-  const levelIndex = quiz.levels.findIndex((l) => l.level === level);
+  const levelPick = (
+    <LevelPickScreen
+      points={score}
+      quiz={quiz}
+      available={levelCounts}
+      onPick={pickLevel}
+      onStations={onStations}
+    />
+  );
 
   if (phase === 'intro') {
     return (
@@ -230,58 +312,65 @@ export function RouletteQuiz({
         variant={variant}
         quiz={quiz}
         points={score}
-        onStart={() => setPhase('wheel')}
+        onStart={() => setPhase('levelPick')}
         onStations={onStations}
       />
     );
   }
+
+  if (phase === 'levelPick') return levelPick;
 
   if (phase === 'themes') {
     return (
       <ThemePickScreen
         points={score}
         quiz={quiz}
+        level={level}
         themes={sectors}
-        onPick={pickQuestion}
+        onPick={startTopic}
+        onBack={() => setPhase('levelPick')}
         onStations={onStations}
       />
     );
   }
 
   if (phase === 'wheel') {
-    // Вопросы уровня кончились — тем для выбора не осталось.
-    if (sectors.length === 0) {
-      return (
-        <OutcomeScreen
-          points={score}
-          title="Вопросы закончились"
-          lines={[`Заработано за попытку: ${points} баллов`]}
-          onStations={onStations}
-        />
-      );
-    }
+    // Вопросы уровня кончились — выбирать нечего, поэтому возвращаем участника
+    // к выбору уровня. Пустое колесо было бы тупиком.
+    if (sectors.length === 0) return levelPick;
+
     return (
       <WheelScreen
         points={score}
         sectors={sectors}
-        onPick={pickQuestion}
+        onPick={startTopic}
         onChooseManually={() => setPhase('themes')}
+        onBack={() => setPhase('levelPick')}
         onStations={onStations}
       />
     );
   }
 
   if (phase === 'question' && question) {
+    // Счётчик отвеченных растёт сразу после ответа, а вопрос на экране
+    // остаётся тем же — пока он не сменился, полоса не должна уходить вперёд.
+    const currentIndex = result ? Math.max(topic.asked - 1, 0) : topic.asked;
+
     return (
       <QuestionScreen
         points={score}
+        variant={variant}
         question={question}
-        levelIndex={levelIndex < 0 ? 0 : levelIndex}
-        levelCount={quiz.levels.length}
+        level={level}
+        levelPoints={quiz.rules.levelPoints[level]}
+        penalty={penaltyFor(quiz.rules, level)}
+        askedInTopic={currentIndex}
+        topicTotal={topicTotal}
         chosen={chosen}
         result={result}
         busy={busy}
         error={error}
+        nextLabel={topic.asked < topicTotal ? 'Следующий вопрос' : 'Итог рубрики'}
         onAnswer={(i) => void answer(i)}
         onNext={() => void next()}
         onStations={onStations}
@@ -289,57 +378,57 @@ export function RouletteQuiz({
     );
   }
 
-  if (phase === 'stake') {
-    return (
-      <StakeScreen
-        points={score}
-        nextLevel={level === 1 ? 2 : 3}
-        prizes={prizes}
-        multiplier={quiz.rules.betMultiplier}
-        onChoose={toNextLevel}
-      />
-    );
-  }
+  if (phase === 'topicDone' && theme) {
+    // Все вопросы всех уровней разобраны — дальше играть нечем, и честнее
+    // сказать об этом прямо, чем вести на экран выбора без вариантов.
+    if (levelCounts[1] + levelCounts[2] + levelCounts[3] === 0) {
+      return (
+        <OutcomeScreen
+          points={score}
+          title="Вопросы закончились"
+          lines={[
+            'Ты ответил на все вопросы этого квиза.',
+            `Заработано за заход: ${points} баллов`,
+            'Попробуй второй квиз или спортивные станции.',
+          ]}
+          onStations={onStations}
+        />
+      );
+    }
 
-  if (phase === 'won') {
     return (
-      <OutcomeScreen
+      <TopicDoneScreen
         points={score}
-        title="Главный приз!"
-        lines={[
-          'Пройдены все три уровня.',
-          bonus > 0 ? `Бонус за полный проход: +${bonus}` : '',
-          `Всего за попытку: ${points} баллов`,
-          'Покажи этот экран волонтёру.',
-        ]}
-        onStations={onStations}
-      />
-    );
-  }
-
-  if (phase === 'lost') {
-    return (
-      <OutcomeScreen
-        points={score}
-        title="Попытка окончена"
-        lines={[
-          result?.prizesLost
-            ? 'Ставка не сыграла — призы сгорели, но баллы остались за тобой.'
-            : 'Баллы за пройденные уровни остаются за тобой.',
-          `Заработано: ${points} баллов`,
-        ]}
+        variant={variant}
+        level={level}
+        theme={theme}
+        correct={topic.correct}
+        asked={topic.asked}
+        earned={topic.earned}
+        bonus={bonus}
+        themesLeft={sectors.length > 0}
+        onAnotherTheme={() => setPhase('wheel')}
+        onChangeLevel={() => setPhase('levelPick')}
         onStations={onStations}
       />
     );
   }
 
   // Сюда попадаем, только если вопрос не успел проставиться, — возвращаем
-  // участника к выбору темы, а не показываем ему чужой экран итога.
-  return (
-    <QuizScreen points={score}>
-      <p className="mt-16 text-center text-kiosk-base font-medium text-white">
-        Готовим вопрос…
-      </p>
-    </QuizScreen>
-  );
+  // участника к выбору уровня, а не показываем ему чужой экран итога.
+  return levelPick;
+}
+
+/**
+ * Случайный, но фиксированный порядок тем: тема → её место в списке.
+ * Тасуем перемешиванием Фишера—Йетса, а не `sort(() => Math.random() - 0.5)`:
+ * второе даёт заметно неравномерный результат и первая тема выпадала бы чаще.
+ */
+function shuffledOrder(themes: string[]): Map<string, number> {
+  const unique = [...new Set(themes)];
+  for (let i = unique.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [unique[i], unique[j]] = [unique[j], unique[i]];
+  }
+  return new Map(unique.map((theme, index) => [theme, index]));
 }

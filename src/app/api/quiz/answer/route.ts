@@ -1,7 +1,13 @@
 import { handle, jsonError, jsonOk } from '@/lib/api';
 import { findQuizQuestion, isQuizVariant, quizActivity } from '@/lib/quiz';
 import { quizAnswerPoints } from '@/lib/scoring';
-import { addScoreEvent, findPlayerById, getActivityEventsToday } from '@/lib/queries';
+import {
+  addScoreEvent,
+  findPlayerById,
+  getActivityEventsToday,
+  getTotalPoints,
+} from '@/lib/queries';
+import { todayLocal } from '@/lib/db';
 import { parseBool, parseId, parseInt_, readJson } from '@/lib/validation';
 
 export const runtime = 'nodejs';
@@ -16,8 +22,12 @@ export const dynamic = 'force-dynamic';
  * `fact` — пояснение/брендовый факт Teboil. Уходит только здесь, вместе с
  * правильным ответом, поэтому не подсказывает ответ заранее.
  *
- * Ставка возможна только с уровня 2. Проигранная ставка сжигает ПРИЗЫ,
- * но уже набранные баллы остаются — за неверный ответ просто ничего не начисляем.
+ * За неверный ответ снимается половина цены уровня (−5 / −10 / −15): ошибка
+ * больше не заканчивает игру, поэтому у неё должна быть цена, иначе выгодно
+ * тыкать наугад. Итог дня при этом никогда не уходит в минус — см. capPenalty.
+ *
+ * Ставка возможна только с уровня 2 и сжигает ПРИЗЫ при проигрыше. В текущем
+ * потоке она не предлагается: клиент всегда шлёт bet: false.
  */
 export function POST(request: Request) {
   return handle(async () => {
@@ -65,10 +75,12 @@ export function POST(request: Request) {
       });
     }
 
+    const points = await capPenalty(playerId, outcome.points);
+
     const saved = await addScoreEvent({
       playerId,
       activity,
-      points: outcome.points,
+      points,
       rawResult: String(answerIndex),
       meta: {
         questionId,
@@ -86,7 +98,7 @@ export function POST(request: Request) {
       correctIndex: question.correctIndex,
       fact: question.fact,
       level: question.level,
-      points: outcome.points,
+      points,
       betApplied: outcome.betApplied,
       prizesLost: outcome.prizesLost,
       alreadyAnswered: false,
@@ -94,4 +106,19 @@ export function POST(request: Request) {
       todayPoints: saved.todayPoints,
     });
   });
+}
+
+/**
+ * Штраф не может увести итог дня в минус: отрицательные числа на лидерборде
+ * и в выгрузке выглядят как сбой, а участнику, который только начал, нечего
+ * терять. Списываем не больше, чем набрано за сегодня.
+ *
+ * Два одновременных ответа одного участника теоретически могут в сумме
+ * перескочить ноль, но планшет у человека один, и блокировать ради этого
+ * строку в базе смысла нет.
+ */
+async function capPenalty(playerId: number, points: number): Promise<number> {
+  if (points >= 0) return points;
+  const today = await getTotalPoints(playerId, todayLocal());
+  return Math.max(points, -Math.max(today, 0));
 }

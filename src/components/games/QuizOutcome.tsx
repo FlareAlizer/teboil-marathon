@@ -1,66 +1,124 @@
 'use client';
 
-import { QuizButton, QuizScreen, ScreenTitle } from './quiz-ui';
+import { cn } from '@/lib/cn';
+import type { QuizVariant } from '@/lib/types';
+import { QuizButton, QuizScreen } from './quiz-ui';
+import { LEVEL_TONES, levelLabel } from './quiz-levels';
 
 /**
- * Экраны ставки и итога квиза.
+ * Экраны между рубриками и в конце попытки.
  *
- * В дизайн-буке этих экранов нет — там нарисован только основной путь, — но
- * механика ставки уже работает и проверена на сервере, поэтому экраны оставлены
- * и приведены к фирменной светлой теме.
+ * В дизайн-буке их нет — там нарисован только основной путь, — поэтому они
+ * собраны из тех же блоков и приведены к фирменной светлой теме.
+ *
+ * Экрана ставки здесь больше нет: он существовал только на переходе
+ * «уровень пройден → следующий уровень», а уровень теперь выбирает сам
+ * участник, и сгорающие призы противоречат правилу «неверный ответ не
+ * заканчивает игру». Серверная механика ставки не тронута (см. scoring.ts),
+ * клиент просто всегда отвечает без неё.
  */
 
 /**
- * Экран ставки. Правило риска объясняется прямым текстом: участник должен
- * понимать, что теряет призы, но не баллы, — иначе решение нечестное.
+ * Итог рубрики: сколько верных из скольких и сколько это дало баллов.
+ *
+ * Отсюда всегда есть три выхода — та же рубрика кончилась, но игра нет:
+ * взять другую тему на том же уровне, сменить уровень или уйти к станциям.
  */
-export function StakeScreen({
+export function TopicDoneScreen({
   points,
-  nextLevel,
-  prizes,
-  multiplier,
-  onChoose,
+  variant,
+  level,
+  theme,
+  correct,
+  asked,
+  earned,
+  bonus,
+  themesLeft,
+  onAnotherTheme,
+  onChangeLevel,
+  onStations,
 }: {
   points: number;
-  nextLevel: 2 | 3;
-  prizes: number;
-  multiplier: number;
-  onChoose: (withStake: boolean) => void;
+  variant: QuizVariant;
+  level: 1 | 2 | 3;
+  theme: string;
+  correct: number;
+  asked: number;
+  earned: number;
+  /** Бонус за все три уровня, если сервер начислил его именно сейчас. */
+  bonus: number;
+  /** Остались ли на этом уровне другие темы. */
+  themesLeft: boolean;
+  onAnotherTheme: () => void;
+  onChangeLevel: () => void;
+  onStations: () => void;
 }) {
+  const tone = LEVEL_TONES[level];
+
   return (
     <QuizScreen points={points}>
-      <ScreenTitle title={`Уровень ${nextLevel}. Рискнёшь?`} />
+      <p className={cn('mb-2 font-display text-kiosk-sm font-bold', tone.text)}>
+        {levelLabel(variant, level)} · {theme}
+      </p>
+      <h1 className="mb-7 font-display text-[2rem] font-black leading-tight text-white">
+        {correct === asked ? 'Рубрика взята!' : 'Рубрика пройдена'}
+      </h1>
 
-      <ul className="space-y-4 bg-teboil-blue-80 p-5">
-        <Rule
-          text={`Поставишь призы (${prizes} шт.) — баллы за уровень вырастут в ${multiplier} раза.`}
-        />
-        <Rule text="Ошибёшься со ставкой — призы сгорят." />
-        <Rule text="Набранные баллы остаются за тобой в любом случае." accent />
-      </ul>
+      <div className="space-y-3 bg-teboil-blue-80 p-5">
+        <Line label="Верных ответов" value={`${correct} из ${asked}`} />
+        <Line label="Баллов за рубрику" value={signed(earned)} />
+        {bonus > 0 && (
+          <Line label="Бонус за все три уровня" value={`+${bonus}`} accent />
+        )}
+      </div>
 
       <div className="mt-auto flex flex-col items-center gap-4 pt-10">
-        <QuizButton onClick={() => onChoose(true)}>Поставить призы</QuizButton>
-        <QuizButton tone="pale" onClick={() => onChoose(false)}>
-          Играть без ставки
+        {themesLeft && (
+          <QuizButton onClick={onAnotherTheme}>Ещё тема</QuizButton>
+        )}
+        <QuizButton tone={themesLeft ? 'pale' : 'red'} onClick={onChangeLevel}>
+          Сменить уровень
+        </QuizButton>
+        <QuizButton tone="pale" onClick={onStations}>
+          К станциям
         </QuizButton>
       </div>
     </QuizScreen>
   );
 }
 
-function Rule({ text, accent = false }: { text: string; accent?: boolean }) {
+/** «+30», «0», «−10»: знак минуса показываем честно, а не прячем. */
+function signed(value: number): string {
+  if (value > 0) return `+${value}`;
+  if (value < 0) return `−${Math.abs(value)}`;
+  return '0';
+}
+
+function Line({
+  label,
+  value,
+  accent = false,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+}) {
   return (
-    <li className="flex gap-3 text-kiosk-sm leading-snug text-white">
-      <span aria-hidden className="text-teboil-red-60">
-        ▪
+    <p className="flex items-baseline justify-between gap-4 text-white">
+      <span className="text-kiosk-sm font-medium">{label}</span>
+      <span
+        className={cn(
+          'shrink-0 font-display text-kiosk-lg font-bold',
+          accent && 'text-teboil-correct-60',
+        )}
+      >
+        {value}
       </span>
-      <span className={accent ? 'font-bold' : 'font-medium'}>{text}</span>
-    </li>
+    </p>
   );
 }
 
-/** Итог попытки: выигрыш, проигрыш или закончившиеся вопросы. */
+/** Итог попытки: вопросы кончились или участник дошёл до конца. */
 export function OutcomeScreen({
   points,
   title,
