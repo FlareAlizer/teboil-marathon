@@ -5,19 +5,17 @@ import { adminLogout, onUnauthorized } from './admin-api';
 import { checkSession } from './endpoints';
 import { LoginForm } from './LoginForm';
 import { ScoreScreen } from './ScoreScreen';
-import { PlayersTab } from './PlayersTab';
 import { StatsTab } from './StatsTab';
 import { StationsTab } from './stations/StationsTab';
 
 type Auth = 'checking' | 'in' | 'out' | 'expired';
 
-export type AdminTab = 'stations' | 'score' | 'players' | 'stats';
+export type AdminTab = 'stations' | 'score' | 'stats';
 
 const TABS: Array<{ id: AdminTab; label: string }> = [
   // Станции первыми: на стенде с панелью работают в основном волонтёры станций.
   { id: 'stations', label: 'Станции' },
   { id: 'score', label: 'Вручную' },
-  { id: 'players', label: 'Игроки' },
   { id: 'stats', label: 'Статистика' },
 ];
 
@@ -84,12 +82,11 @@ export function AdminApp() {
       <main className="flex-1 px-5 pb-[calc(96px+env(safe-area-inset-bottom))]">
         {tab === 'stations' && <StationsTab />}
         {tab === 'score' && <ScoreScreen />}
-        {tab === 'players' && <PlayersTab />}
         {tab === 'stats' && <StatsTab />}
       </main>
 
       {/* Вкладки внизу: телефон в одной руке, большой палец достаёт до низа */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 gap-1 border-t border-teboil-line bg-teboil-ink/95 px-2 pb-[env(safe-area-inset-bottom)] pt-2 backdrop-blur">
+      <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-3 gap-1 border-t border-teboil-line bg-teboil-ink/95 px-2 pb-[env(safe-area-inset-bottom)] pt-2 backdrop-blur">
         {TABS.map((item) => (
           <button
             key={item.id}
