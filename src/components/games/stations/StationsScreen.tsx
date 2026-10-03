@@ -4,11 +4,18 @@ import { useCallback, useEffect, useState } from 'react';
 import { SkewedPlate, skewFor } from '@/components/ui';
 import { truncateNickname } from '@/components/admin/format';
 import { displayName } from '@/lib/validation';
-import type { LeaderboardRow } from '@/lib/types';
+import {
+  RATINGS,
+  RATING_IDS,
+  formatRatingValue,
+  ratingUnit,
+  type PlayerRating,
+  type RatingId,
+  type RatingRow,
+} from '@/lib/rating-defs';
 import { AppHeader } from './AppHeader';
 import { PromoCards } from './PromoCard';
-import { getDayLeaderboard, getPlayerCard } from './stations-api';
-import { stationsFromEvents, type StationProgress } from './stations-progress';
+import { getPlayerCard, getRatingTop } from './stations-api';
 
 const BOARD_SIZE = 4;
 
@@ -16,13 +23,16 @@ const BOARD_SIZE = 4;
 const STATION_ROW_H = 54;
 const BOARD_ROW_H = 46;
 
+type Places = Record<RatingId, PlayerRating | null>;
+
+const NO_PLACES: Places = { quiz: null, keepups: null, darts: null, obstacle: null };
+
 /**
  * Экран станций (макет 51:108) — хаб участника после входа.
  *
- * Показывает, сколько человек уже прошёл по каждой активности и сколько за
- * это набрал. Никаких полей ввода результата здесь нет и быть не должно:
- * баллы за спортивные станции заводит оператор через админку, участник их
- * себе не ставит.
+ * По каждой из четырёх дисциплин показывает результат участника и его место
+ * в рейтинге дня. Никаких полей ввода результата здесь нет и быть не должно:
+ * результаты станций вносит волонтёр, участник их себе не ставит.
  */
 export function StationsScreen({
   playerId,
@@ -31,22 +41,20 @@ export function StationsScreen({
   playerId: number;
   onBack: () => void;
 }) {
-  const [stations, setStations] = useState<StationProgress[]>(
-    stationsFromEvents([]),
-  );
+  const [places, setPlaces] = useState<Places>(NO_PLACES);
   const [points, setPoints] = useState(0);
-  const [board, setBoard] = useState<LeaderboardRow[]>([]);
+  const [board, setBoard] = useState<RatingRow[]>([]);
   const [failed, setFailed] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [card, leaderboard] = await Promise.all([
+      const [card, quizTop] = await Promise.all([
         getPlayerCard(playerId),
-        getDayLeaderboard(BOARD_SIZE),
+        getRatingTop('quiz', BOARD_SIZE),
       ]);
-      setStations(stationsFromEvents(card.events));
+      setPlaces(card.ratings ?? NO_PLACES);
       setPoints(card.todayPoints);
-      setBoard(leaderboard.rows);
+      setBoard(quizTop.rows);
       setFailed(false);
     } catch {
       // Экран не гасим: прежние числа остаются, показываем тихую метку.
@@ -74,22 +82,20 @@ export function StationsScreen({
         <p className="font-display text-[52px] font-black leading-none tabular-nums text-teboil-red">
           {points}
         </p>
-        <p className="mt-1 text-[14px] font-medium text-teboil-muted">
-          Очков в лидерборд
-        </p>
+        <p className="mt-1 text-[14px] font-medium text-teboil-muted">Баллов сегодня</p>
       </section>
 
       <section className="mx-4 bg-teboil-blue p-3">
         <ul className="space-y-2">
-          {stations.map((station) => (
-            <StationRow key={station.id} station={station} />
+          {RATING_IDS.map((id) => (
+            <StationRow key={id} id={id} place={places[id]} />
           ))}
         </ul>
       </section>
 
       <PromoCards className="mt-5 px-4" />
 
-      <DayBoard rows={board} />
+      <QuizBoard rows={board} />
 
       {failed && (
         <p className="mt-5 px-4 text-center text-[13px] font-medium text-teboil-muted">
@@ -101,55 +107,48 @@ export function StationsScreen({
 }
 
 /**
- * Строка станции: название, прогресс и набранные очки.
- *
- * Прогресс показывается по-разному, и это намеренно. У квиза есть настоящий
- * знаменатель — три уровня, поэтому «1 из 3». У спортивных станций числа
- * попыток не существует, поэтому там честное «пройдено» вместо выдуманного
- * «0 из 1».
+ * Строка дисциплины: название, результат и место в рейтинге дня.
+ * В спорте показан ЛУЧШИЙ результат — именно он стоит в рейтинге.
  */
-function StationRow({ station }: { station: StationProgress }) {
-  const progress =
-    station.total !== null
-      ? `${station.done} из ${station.total}`
-      : station.done > 0
-        ? 'пройдено'
-        : 'не пройдено';
+function StationRow({ id, place }: { id: RatingId; place: PlayerRating | null }) {
+  const def = RATINGS[id];
 
   return (
     <SkewedPlate
       as="li"
       tone="blue-60"
       skewX={skewFor(STATION_ROW_H)}
-      className="min-h-[54px]"
+      className="h-[54px]"
       contentClassName="gap-3 px-5"
     >
       <span className="min-w-0 flex-1 font-display text-[15px] font-bold leading-tight text-teboil-white">
-        {station.title}
+        {def.title}
       </span>
 
       <span className="shrink-0 text-[13px] font-medium tabular-nums text-teboil-white/80">
-        {progress}
+        {place
+          ? `${formatRatingValue(id, place.value)} ${ratingUnit(id, place.value)}`
+          : 'не пройдено'}
       </span>
 
-      <span className="w-[46px] shrink-0 text-right font-display text-[24px] font-black leading-none tabular-nums text-teboil-white">
-        {station.points}
+      <span className="w-[56px] shrink-0 text-right font-display text-[22px] font-black leading-none tabular-nums text-teboil-white">
+        {place ? `#${place.rank}` : '—'}
       </span>
     </SkewedPlate>
   );
 }
 
 /**
- * «Лидерборд дня» внизу экрана. Первая строка красная, остальные синие —
+ * Верх рейтинга квиза внизу экрана. Первая строка красная, остальные синие —
  * так топ читается с одного взгляда, как в макете.
  */
-function DayBoard({ rows }: { rows: readonly LeaderboardRow[] }) {
+function QuizBoard({ rows }: { rows: readonly RatingRow[] }) {
   if (rows.length === 0) return null;
 
   return (
     <section className="mt-8 px-4">
       <h2 className="mb-3 font-display text-[19px] font-bold text-teboil-red">
-        Лидерборд дня
+        Рейтинг квиза
       </h2>
 
       <ul className="space-y-2">
@@ -159,14 +158,14 @@ function DayBoard({ rows }: { rows: readonly LeaderboardRow[] }) {
             key={row.id}
             tone={index === 0 ? 'red' : 'blue'}
             skewX={skewFor(BOARD_ROW_H)}
-            className="min-h-[46px]"
+            className="h-[46px]"
             contentClassName="gap-3 px-5"
           >
             <span className="min-w-0 flex-1 truncate font-display text-[16px] font-bold text-teboil-white">
               {truncateNickname(displayName(row.nickname), 18)}
             </span>
             <span className="shrink-0 font-display text-[22px] font-black leading-none tabular-nums text-teboil-white">
-              {row.points}
+              {row.value}
             </span>
           </SkewedPlate>
         ))}

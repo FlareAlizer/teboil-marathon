@@ -13,6 +13,12 @@ import type {
   PlayerSummary,
   ScoreEvent,
 } from '@/lib/types';
+import type {
+  PlayerRating,
+  RatingBoard,
+  RatingId,
+  StationEntry,
+} from '@/lib/rating-defs';
 import { adminFetch, adminPost } from './admin-api';
 
 /* --------------------------------- Сессия -------------------------------- */
@@ -59,6 +65,8 @@ export interface PlayerCard {
   totalPoints: number;
   todayPoints: number;
   rank: number | null;
+  /** Место в каждом из четырёх рейтингов дня; null — ещё не выступал. */
+  ratings: Record<RatingId, PlayerRating | null>;
   events: ScoreEvent[];
 }
 
@@ -119,3 +127,35 @@ export function getLeaderboard(limit = 10): Promise<LeaderboardData> {
   return adminFetch<LeaderboardData>(`/api/leaderboard?limit=${limit}`);
 }
 
+
+/* -------------------------------- Рейтинги -------------------------------- */
+
+export interface RatingsData {
+  day: string;
+  updatedAt: string;
+  boards: RatingBoard[];
+}
+
+/** Четыре рейтинга дня (или один, если указан `board`) — открыто без входа. */
+export function getRatings(limit = 10, board?: RatingId): Promise<RatingsData> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (board) params.set('board', board);
+  return adminFetch<RatingsData>(`/api/ratings?${params.toString()}`);
+}
+
+export interface StationData {
+  board: RatingBoard;
+  entries: StationEntry[];
+}
+
+/** Рейтинг станции и её последние записи — экран волонтёра. */
+export function getStation(board: Exclude<RatingId, 'quiz'>): Promise<StationData> {
+  return adminFetch<StationData>(`/api/station?board=${board}`);
+}
+
+/** Места участника во всех четырёх рейтингах. */
+export function getPlayerRatings(
+  id: number,
+): Promise<Record<RatingId, PlayerRating | null>> {
+  return adminFetch<PlayerCard>(`/api/players/${id}`).then((card) => card.ratings);
+}

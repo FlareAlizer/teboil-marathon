@@ -1,4 +1,5 @@
 import { nicknameKey, sql, todayLocal, tx } from './db';
+import { invalidateRatings } from './ratings';
 import {
   ACTIVITIES,
   type Activity,
@@ -426,6 +427,7 @@ const BOARD_TTL_MS = 2000;
 
 function invalidateBoardCache(): void {
   boardCache.clear();
+  invalidateRatings();
 }
 
 /** Топ за сегодня: по сумме баллов, при равенстве — кто раньше начал. */

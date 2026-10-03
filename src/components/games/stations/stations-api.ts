@@ -3,13 +3,13 @@
 /**
  * Данные для экрана станций.
  *
- * Экран показывает прогресс участника: сколько пройдено по каждой активности
- * и сколько за неё набрано. Новых эндпоинтов здесь нет — всё считается из
- * `GET /api/players/[id]`, который отдаёт события игрока, и из
- * `GET /api/leaderboard` для нижнего блока «Лидерборд дня».
+ * Экран показывает, где участник стоит в каждом из четырёх рейтингов дня, и
+ * верх рейтинга квиза. Всё берётся из `GET /api/players/[id]` (там места
+ * участника) и `GET /api/ratings`.
  */
 
-import type { ApiResponse, LeaderboardRow, ScoreEvent } from '@/lib/types';
+import type { ApiResponse, ScoreEvent } from '@/lib/types';
+import type { PlayerRating, RatingBoard, RatingId } from '@/lib/rating-defs';
 
 /** Ответ `GET /api/players/[id]`. Форма сверена с обработчиком маршрута. */
 export interface PlayerCardData {
@@ -20,6 +20,7 @@ export interface PlayerCardData {
   totalPoints: number;
   todayPoints: number;
   rank: number | null;
+  ratings: Record<RatingId, PlayerRating | null>;
   events: ScoreEvent[];
 }
 
@@ -46,17 +47,15 @@ async function request<T>(url: string): Promise<T> {
   );
 }
 
-/** Карточка участника: профиль, суммы и все его начисления. */
+/** Карточка участника: профиль, суммы, места в рейтингах и начисления. */
 export function getPlayerCard(id: number): Promise<PlayerCardData> {
   return request<PlayerCardData>(`/api/players/${id}`);
 }
 
-export interface LeaderboardData {
-  day: string;
-  updatedAt: string;
-  rows: LeaderboardRow[];
-}
-
-export function getDayLeaderboard(limit = 4): Promise<LeaderboardData> {
-  return request<LeaderboardData>(`/api/leaderboard?limit=${limit}`);
+/** Верх одного рейтинга дня. */
+export async function getRatingTop(board: RatingId, limit = 4): Promise<RatingBoard> {
+  const data = await request<{ boards: RatingBoard[] }>(
+    `/api/ratings?board=${board}&limit=${limit}`,
+  );
+  return data.boards[0];
 }

@@ -1,4 +1,5 @@
 import { ACTIVITIES, type Activity, type CreatedBy } from './types';
+import { SCORING, obstacleFinalTime } from './scoring';
 
 /** Ошибка валидации на границе системы — превращается в 400. */
 export class ValidationError extends Error {
@@ -184,4 +185,48 @@ export async function readJson(request: Request): Promise<Record<string, unknown
     if (e instanceof ValidationError) throw e;
     fail('Некорректный JSON в теле запроса');
   }
+}
+
+/* ------------------------- Результаты на станциях ------------------------- */
+
+const MAX_SPORT_RESULT = 999;
+
+/**
+ * Проверка результата станции на сервере. Рейтинги чеканки, дартса и полосы
+ * сортируются по этому числу, поэтому принимать что угодно нельзя: одна
+ * опечатка вида «3з» выпала бы из таблицы, а «9999» навсегда заняла бы
+ * первое место.
+ *
+ * Для полосы итоговое время считает сервер — из чистого времени и того,
+ * забит ли мяч. Клиенту итог не доверяем: штраф за промах должен быть
+ * одинаковым на любом телефоне волонтёра.
+ */
+export function parseSportEntry(
+  activity: Activity,
+  rawResult: string | null,
+  meta: Record<string, unknown> | null,
+): { rawResult: string | null; meta: Record<string, unknown> | null } {
+  if (activity === 'sport_keepups' || activity === 'sport_darts') {
+    if (rawResult === null || !/^\d{1,3}$/.test(rawResult)) {
+      fail(`Результат: целое число от 0 до ${MAX_SPORT_RESULT}`);
+    }
+    return { rawResult: String(Number(rawResult)), meta };
+  }
+
+  if (activity === 'sport_obstacle') {
+    const cleaned = (rawResult ?? '').replace(',', '.');
+    const time = Number(cleaned);
+    if (!/^\d{1,3}([.]\d)?$/.test(cleaned) || time <= 0) {
+      fail('Время: число секунд больше нуля, не больше одной цифры после запятой');
+    }
+    const goal = meta?.goal;
+    if (typeof goal !== 'boolean') fail('Полоса: укажите, забит ли мяч');
+    const penaltySec = goal ? 0 : SCORING.sport.sport_obstacle.missPenaltySec;
+    return {
+      rawResult: String(obstacleFinalTime(time, goal)),
+      meta: { ...meta, timeSec: time, goal, penaltySec },
+    };
+  }
+
+  return { rawResult, meta };
 }

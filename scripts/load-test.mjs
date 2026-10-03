@@ -101,29 +101,38 @@ async function participant(id, run, stats) {
   return player.id;
 }
 
-/** Телевизор: опрос лидерборда, пока идёт волна участников. */
+/** Телевизор: опрос четырёх рейтингов, пока идёт волна участников. */
 async function screenPolling(stats, stop) {
   while (!stop.done) {
-    await timed(stats.board, () => call('/api/leaderboard?limit=10'));
+    await timed(stats.board, () => call('/api/ratings?limit=10'));
     await new Promise((r) => setTimeout(r, 300));
   }
 }
 
-/** Оператор: начисления за спортивные станции во время волны. */
+/**
+ * Случайная запись станции в том виде, в каком её шлёт панель волонтёра:
+ * сервер проверяет результат, поэтому он должен быть настоящим.
+ */
+function stationEntry() {
+  const roll = Math.floor(Math.random() * 3);
+  if (roll === 0) return { activity: 'sport_keepups', rawResult: String(Math.floor(Math.random() * 60)) };
+  if (roll === 1) return { activity: 'sport_darts', rawResult: String(Math.floor(Math.random() * 180)) };
+  return {
+    activity: 'sport_obstacle',
+    rawResult: (15 + Math.random() * 30).toFixed(1),
+    meta: { goal: Math.random() < 0.6 },
+  };
+}
+
+/** Волонтёры станций: записи результатов во время волны. */
 async function operator(stats, cookie, players, stop) {
-  const activities = ['sport_keepups', 'sport_obstacle', 'sport_goal', 'sport_darts'];
   while (!stop.done) {
     const id = players[Math.floor(Math.random() * players.length)];
     if (id) {
       await timed(stats.award, () =>
         post(
           '/api/score',
-          {
-            playerId: id,
-            activity: activities[Math.floor(Math.random() * activities.length)],
-            points: 10 + Math.floor(Math.random() * 30),
-            createdBy: 'admin',
-          },
+          { playerId: id, points: 10 + Math.floor(Math.random() * 30), ...stationEntry() },
           { cookie },
         ),
       );

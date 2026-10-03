@@ -97,6 +97,42 @@ export function login(nickname: string): Promise<LoginResponse> {
   return post<LoginResponse>('/api/players', { nickname });
 }
 
+/* --------------------------- Вход через Telegram -------------------------- */
+
+/** Вход по данным, которые Telegram передал открытому в нём сайту. */
+export function telegramLogin(initData: string): Promise<LoginResponse> {
+  return post<LoginResponse>('/api/players/telegram', { initData });
+}
+
+/** Куда ведёт кнопка «Войти через Telegram»; null — вход не настроен. */
+export async function getTelegramLoginUrl(): Promise<string | null> {
+  try {
+    const data = await request<{ loginUrl: string | null }>('/api/telegram');
+    return data.loginUrl;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Данные входа, если сайт открыт внутри Telegram.
+ *
+ * Telegram кладёт их в адрес после «#» (`tgWebAppData=…`). Официальный скрипт
+ * Telegram читает их оттуда же, поэтому ради одной строки его не ждём —
+ * вход начинается сразу, без лишнего запроса к telegram.org.
+ */
+export function readTelegramInitData(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const fromHash = new URLSearchParams(window.location.hash.slice(1)).get('tgWebAppData');
+    if (fromHash) return fromHash;
+    const tg = (window as unknown as { Telegram?: { WebApp?: { initData?: string } } }).Telegram;
+    return tg?.WebApp?.initData || null;
+  } catch {
+    return null;
+  }
+}
+
 /* ----------------------------- Квиз с рулеткой ----------------------------- */
 
 export interface QuizQuestionView {

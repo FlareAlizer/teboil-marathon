@@ -35,6 +35,11 @@ export function nicknameKey(nickname: string): string {
  * «уже отвечал?» в коде проигрывает гонку, а ограничение в базе — нет.
  */
 const SCHEMA = `
+-- Все рабочие процессы выполняют схему при старте одновременно. Блокировка
+-- на время этой транзакции ставит их в очередь: иначе два процесса могли бы
+-- одновременно добавлять одну колонку или индекс и один из них упал бы.
+SELECT pg_advisory_xact_lock(727274);
+
 CREATE TABLE IF NOT EXISTS players (
   id           serial PRIMARY KEY,
   nickname     text NOT NULL,
@@ -72,6 +77,12 @@ CREATE TABLE IF NOT EXISTS visits (
 );
 
 CREATE INDEX IF NOT EXISTS idx_players_nickname ON players (lower(nickname) text_pattern_ops);
+
+-- Вход через Telegram: аккаунт узнаётся по id, а не по нику — юзернейм в
+-- Telegram можно сменить, id нет. У участников, вошедших по нику, пусто.
+ALTER TABLE players ADD COLUMN IF NOT EXISTS telegram_id bigint;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_players_telegram
+  ON players (telegram_id) WHERE telegram_id IS NOT NULL;
 `;
 
 /* ------------------------------- Подключение ------------------------------- */

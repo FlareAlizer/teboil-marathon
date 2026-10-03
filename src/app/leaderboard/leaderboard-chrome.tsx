@@ -17,7 +17,7 @@ import { SkewedPlate, skewFor } from '@/components/ui';
  */
 const LOGO_SKEW = skewFor(6 + 0.7 * 2, 'vh');
 
-export function LeaderboardHeader() {
+export function LeaderboardHeader({ title = 'Топ дня' }: { title?: string }) {
   return (
     <header className="flex shrink-0 items-center justify-between gap-[2vw] px-[3vw] py-[2vh]">
       <div className="flex items-center gap-[1.5vw]">
@@ -38,7 +38,7 @@ export function LeaderboardHeader() {
       </div>
 
       <span className="font-display text-[4vh] font-black leading-none text-teboil-red">
-        Топ дня
+        {title}
       </span>
     </header>
   );

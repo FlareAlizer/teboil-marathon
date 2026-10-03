@@ -4,11 +4,11 @@ import { addScoreEvent, deleteScoreEvent, findPlayerById } from '@/lib/queries';
 import { SCORING } from '@/lib/scoring';
 import {
   parseActivity,
-  parseCreatedBy,
   parseId,
   parseInt_,
   parseMeta,
   parseOptionalText,
+  parseSportEntry,
   readJson,
 } from '@/lib/validation';
 
@@ -16,23 +16,34 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * POST /api/score — начисление баллов.
- * Тело: { playerId, activity, points, rawResult?, meta?, createdBy }
- * createdBy = 'admin' требует активной сессии оператора.
+ * POST /api/score — начисление оператором или волонтёром станции.
+ * Тело: { playerId, activity, points, rawResult?, meta? }
  * Ответ: { event, totalPoints, todayPoints }
+ *
+ * Только с сессией оператора, всегда. Раньше начисление с `createdBy: 'auto'`
+ * проходило без входа — тогда это ничего не открывало, но теперь по
+ * результатам станций строятся рейтинги с призами, и любой мог бы поставить
+ * себе 999 очков в дартс одним запросом. Сама игра сюда не ходит: баллы за
+ * квиз начисляет /api/quiz/answer.
+ *
+ * Результаты чеканки, дартса и полосы проверяются на сервере, итоговое
+ * время полосы (со штрафом за промах) считается тоже здесь — см.
+ * parseSportEntry.
  */
 export function POST(request: Request) {
   return handle(async () => {
+    await requireAdmin();
+
     const body = await readJson(request);
 
     const playerId = parseId(body.playerId, 'playerId');
     const activity = parseActivity(body.activity);
     const points = parseInt_(body.points, 'points', -SCORING.manual.max, SCORING.manual.max);
-    const rawResult = parseOptionalText(body.rawResult, 'rawResult', 200);
-    const meta = parseMeta(body.meta);
-    const createdBy = parseCreatedBy(body.createdBy);
-
-    if (createdBy === 'admin') await requireAdmin();
+    const entry = parseSportEntry(
+      activity,
+      parseOptionalText(body.rawResult, 'rawResult', 200),
+      parseMeta(body.meta),
+    );
 
     if (!await findPlayerById(playerId)) return jsonError('Участник не найден', 404);
 
@@ -40,9 +51,9 @@ export function POST(request: Request) {
       playerId,
       activity,
       points,
-      rawResult,
-      meta,
-      createdBy,
+      rawResult: entry.rawResult,
+      meta: entry.meta,
+      createdBy: 'admin',
     });
 
     return jsonOk(result, 201);

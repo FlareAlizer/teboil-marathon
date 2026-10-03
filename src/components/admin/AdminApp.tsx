@@ -7,13 +7,16 @@ import { LoginForm } from './LoginForm';
 import { ScoreScreen } from './ScoreScreen';
 import { PlayersTab } from './PlayersTab';
 import { StatsTab } from './StatsTab';
+import { StationsTab } from './stations/StationsTab';
 
 type Auth = 'checking' | 'in' | 'out' | 'expired';
 
-export type AdminTab = 'score' | 'players' | 'stats';
+export type AdminTab = 'stations' | 'score' | 'players' | 'stats';
 
 const TABS: Array<{ id: AdminTab; label: string }> = [
-  { id: 'score', label: 'Баллы' },
+  // Станции первыми: на стенде с панелью работают в основном волонтёры станций.
+  { id: 'stations', label: 'Станции' },
+  { id: 'score', label: 'Вручную' },
   { id: 'players', label: 'Игроки' },
   { id: 'stats', label: 'Статистика' },
 ];
@@ -27,7 +30,7 @@ const TABS: Array<{ id: AdminTab; label: string }> = [
  */
 export function AdminApp() {
   const [auth, setAuth] = useState<Auth>('checking');
-  const [tab, setTab] = useState<AdminTab>('score');
+  const [tab, setTab] = useState<AdminTab>('stations');
 
   useEffect(() => {
     let alive = true;
@@ -45,7 +48,7 @@ export function AdminApp() {
   const logout = useCallback(async () => {
     await adminLogout();
     setAuth('out');
-    setTab('score');
+    setTab('stations');
   }, []);
 
   if (auth === 'checking') {
@@ -79,6 +82,7 @@ export function AdminApp() {
 
       {/* pb под панель вкладок, чтобы контент не уезжал под неё */}
       <main className="flex-1 px-5 pb-[calc(96px+env(safe-area-inset-bottom))]">
+        {tab === 'stations' && <StationsTab />}
         {tab === 'score' && <ScoreScreen />}
         {tab === 'players' && <PlayersTab />}
         {tab === 'stats' && <StatsTab />}
@@ -92,7 +96,7 @@ export function AdminApp() {
             type="button"
             onClick={() => setTab(item.id)}
             aria-current={tab === item.id ? 'page' : undefined}
-            className={`min-h-tap-lg rounded-btn font-display text-kiosk-sm font-black uppercase tracking-tight transition-colors ${
+            className={`min-h-tap-lg rounded-btn px-1 font-display text-[12px] font-black uppercase leading-tight tracking-tight transition-colors sm:text-kiosk-sm ${
               tab === item.id
                 ? 'bg-teboil-red text-white'
                 : 'text-teboil-muted active:bg-white/10'

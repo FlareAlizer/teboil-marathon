@@ -10,9 +10,12 @@ import { StationsScreen } from './stations/StationsScreen';
 import {
   clearPlayer,
   errorText,
+  getTelegramLoginUrl,
   loadPlayer,
   login,
+  readTelegramInitData,
   savePlayer,
+  telegramLogin,
   type CurrentPlayer,
 } from './game-api';
 import { RouletteQuiz } from './RouletteQuiz';
@@ -39,9 +42,37 @@ export function GameApp() {
   const [screen, setScreen] = useState<Screen>('menu');
   const [variant, setVariant] = useState<QuizVariant>('v1');
 
+  const [tgError, setTgError] = useState<string | null>(null);
+
   useEffect(() => {
-    setPlayer(loadPlayer());
-    setReady(true);
+    // Внутри Telegram участник уже известен — входим сразу, без экрана входа.
+    // Это его собственный телефон, поэтому аккаунт Telegram важнее того, что
+    // осталось в памяти браузера.
+    const initData = readTelegramInitData();
+    if (!initData) {
+      setPlayer(loadPlayer());
+      setReady(true);
+      return;
+    }
+
+    expandTelegramView();
+    telegramLogin(initData)
+      .then((result) => {
+        const p: CurrentPlayer = {
+          id: result.id,
+          nickname: result.nickname,
+          totalPoints: result.totalPoints,
+          todayPoints: result.todayPoints,
+        };
+        savePlayer(p);
+        setPlayer(p);
+      })
+      .catch((e: unknown) => {
+        // Не вышло — остаётся обычный вход по юзернейму, с объяснением.
+        setTgError(errorText(e));
+        setPlayer(loadPlayer());
+      })
+      .finally(() => setReady(true));
   }, []);
 
   function updatePoints(totalPoints: number, todayPoints: number) {
@@ -75,6 +106,7 @@ export function GameApp() {
   if (!player) {
     return (
       <LoginScreen
+        initialError={tgError}
         onLogin={(p) => {
           savePlayer(p);
           setPlayer(p);
@@ -123,10 +155,30 @@ export function GameApp() {
 
 /* ---------------------------------- Вход ---------------------------------- */
 
-function LoginScreen({ onLogin }: { onLogin: (p: CurrentPlayer) => void }) {
+function LoginScreen({
+  onLogin,
+  initialError,
+}: {
+  onLogin: (p: CurrentPlayer) => void;
+  initialError: string | null;
+}) {
   const [nickname, setNickname] = useState('');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError);
+  const [tgUrl, setTgUrl] = useState<string | null>(null);
+
+  // Кнопка появляется, только если на сервере настроен бот. Внутри самого
+  // Telegram она не нужна: туда участник попадает уже с готовым входом.
+  useEffect(() => {
+    if (readTelegramInitData()) return;
+    let alive = true;
+    void getTelegramLoginUrl().then((url) => {
+      if (alive) setTgUrl(url);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   async function submit() {
     if (busy) return;
@@ -169,6 +221,26 @@ function LoginScreen({ onLogin }: { onLogin: (p: CurrentPlayer) => void }) {
           назовёшь волонтёру на спортивных активностях.
         </p>
 
+        {tgUrl && (
+          <>
+            {/* Самый быстрый путь со своего телефона: одно касание, и игра
+                открывается в Telegram уже под твоим аккаунтом. */}
+            <a
+              href={tgUrl}
+              className="flex min-h-tap-xl items-center justify-center gap-3 bg-[#2AABEE] px-5 font-display text-kiosk-base font-black text-white active:bg-[#229ED9]"
+            >
+              <TelegramIcon />
+              Войти через Telegram
+            </a>
+            <p className="mb-6 mt-2 text-center text-[14px] font-medium text-teboil-muted">
+              Ничего вводить не нужно
+            </p>
+            <p className="mb-3 text-center text-kiosk-sm font-bold text-teboil-muted">
+              или впиши юзернейм вручную
+            </p>
+          </>
+        )}
+
         {/* Поле со скошенной кнопкой-стрелкой — как на макете 5:21, а
             состояние ошибки — как на 11:139. Компонент общий, поэтому здесь
             нет ни своей вёрстки поля, ни своей валидации. */}
@@ -189,7 +261,9 @@ function LoginScreen({ onLogin }: { onLogin: (p: CurrentPlayer) => void }) {
         <p className="mt-6 text-kiosk-sm font-medium leading-snug text-teboil-muted">
           Уже играл сегодня? Введи тот же юзернейм — баллы сохранятся.
           <br />
-          Нет юзернейма в Телеграме? Подойди к волонтёру, он тебя запишет.
+          {tgUrl
+            ? 'Нет юзернейма в Телеграме? Жми «Войти через Telegram» — он не нужен.'
+            : 'Нет юзернейма в Телеграме? Подойди к волонтёру, он тебя запишет.'}
         </p>
 
         {/* Вход для волонтёра. Намеренно неброский: участнику он не нужен,
@@ -206,6 +280,34 @@ function LoginScreen({ onLogin }: { onLogin: (p: CurrentPlayer) => void }) {
   );
 }
 
+/** Бумажный самолётик Telegram — по нему кнопку узнают без чтения. */
+function TelegramIcon() {
+  return (
+    <svg aria-hidden viewBox="0 0 24 24" className="h-7 w-7 shrink-0" fill="currentColor">
+      <path d="M21.9 4.3 18.7 19.4c-.2 1.1-.9 1.3-1.8.8l-4.9-3.6-2.4 2.3c-.3.3-.5.5-1 .5l.3-5 9.1-8.2c.4-.4-.1-.6-.6-.2L6.2 13.1l-4.8-1.5c-1-.3-1.1-1 .2-1.5L20.4 2.9c.9-.3 1.7.2 1.5 1.4Z" />
+    </svg>
+  );
+}
+
+/**
+ * Разворачивает окно игры внутри Telegram на весь экран. Официальный скрипт
+ * подгружается только здесь, внутри Telegram, и не обязателен: если он не
+ * загрузится, игра просто откроется в окне обычной высоты.
+ */
+function expandTelegramView() {
+  type WebApp = { ready?: () => void; expand?: () => void };
+  const apply = () => {
+    const app = (window as unknown as { Telegram?: { WebApp?: WebApp } }).Telegram?.WebApp;
+    app?.ready?.();
+    app?.expand?.();
+  };
+  const script = document.createElement('script');
+  script.src = 'https://telegram.org/js/telegram-web-app.js';
+  script.async = true;
+  script.onload = apply;
+  document.head.appendChild(script);
+}
+
 /* ---------------------------------- Меню ---------------------------------- */
 
 function Menu({
@@ -217,6 +319,9 @@ function Menu({
   onGo: (s: Screen) => void;
   onFinish: () => void;
 }) {
+  const [inTelegram, setInTelegram] = useState(false);
+  useEffect(() => setInTelegram(readTelegramInitData() !== null), []);
+
   return (
     <main className="flex min-h-dvh flex-col bg-white">
       <AppHeader points={player.todayPoints} />
@@ -239,7 +344,7 @@ function Menu({
           <Tile
             tone="blue"
             title="Эстафета"
-            note="Чеканка, полоса, гол, дартс"
+            note="Чеканка, дартс, полоса препятствий"
             onClick={() => onGo('sports')}
           />
         </div>
@@ -264,17 +369,24 @@ function Menu({
             <span className="skew-x-brand-inv">Лидерборд</span>
           </a>
 
-          <Button variant="danger" size="md" fullWidth onClick={onFinish}>
-            Следующий участник
-          </Button>
+          {/* Внутри Telegram это личный телефон, а не общий планшет: передавать
+              его следующему некому, а «выйти» означало бы только потерять вход. */}
+          {!inTelegram && (
+            <Button variant="danger" size="md" fullWidth onClick={onFinish}>
+              Следующий участник
+            </Button>
+          )}
 
-          {/* Вход для волонтёра — тот же, что на экране входа. */}
-          <a
-            href="/admin"
-            className="self-center text-kiosk-sm font-bold text-teboil-muted underline underline-offset-4"
-          >
-            Панель оператора
-          </a>
+          {/* Вход для волонтёра — тот же, что на экране входа. На личном
+              телефоне участника внутри Telegram он не нужен. */}
+          {!inTelegram && (
+            <a
+              href="/admin"
+              className="self-center text-kiosk-sm font-bold text-teboil-muted underline underline-offset-4"
+            >
+              Панель оператора
+            </a>
+          )}
         </div>
       </div>
     </main>
