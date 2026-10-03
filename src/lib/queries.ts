@@ -360,8 +360,17 @@ export interface DeleteScoreResult {
  * время мероприятия.
  */
 export async function deleteScoreEvent(id: number): Promise<DeleteScoreResult | null> {
+  // Удаление и перенос в архив — одна команда: запись не может пропасть
+  // между ними, даже если процесс упадёт посередине.
   const rows = await sql<EventRow>(
-    'DELETE FROM score_events WHERE id = $1 RETURNING *',
+    `WITH gone AS (DELETE FROM score_events WHERE id = $1 RETURNING *),
+          kept AS (
+            INSERT INTO deleted_events
+              (id, player_id, activity, points, raw_result, meta, event_day, created_at, created_by)
+            SELECT id, player_id, activity, points, raw_result, meta, event_day, created_at, created_by
+              FROM gone
+          )
+     SELECT * FROM gone`,
     [id],
   );
   const row = rows[0];

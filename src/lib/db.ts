@@ -81,6 +81,23 @@ CREATE INDEX IF NOT EXISTS idx_players_nickname ON players (lower(nickname) text
 -- Вход через Telegram: аккаунт узнаётся по id, а не по нику — юзернейм в
 -- Telegram можно сменить, id нет. У участников, вошедших по нику, пусто.
 ALTER TABLE players ADD COLUMN IF NOT EXISTS telegram_id bigint;
+
+-- Архив отменённых начислений. «Отменить» в панели не стирает запись
+-- бесследно, а переносит сюда со временем отмены: если отменили не то или
+-- возник спор о призе, всё можно восстановить. Без внешнего ключа на
+-- участника — архив не должен зависеть от того, что станет с основными данными.
+CREATE TABLE IF NOT EXISTS deleted_events (
+  id          bigint PRIMARY KEY,
+  player_id   integer NOT NULL,
+  activity    text NOT NULL,
+  points      integer NOT NULL,
+  raw_result  text,
+  meta        jsonb,
+  event_day   date NOT NULL,
+  created_at  timestamptz NOT NULL,
+  created_by  text NOT NULL,
+  deleted_at  timestamptz NOT NULL DEFAULT now()
+);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_players_telegram
   ON players (telegram_id) WHERE telegram_id IS NOT NULL;
 `;

@@ -156,6 +156,9 @@ export interface QuizQuestionLookup {
   /** Показывается участнику только после ответа. */
   fact: string | null;
   theme: string;
+  /** Текст вопроса и вариантов — сохраняются в журнале вместе с ответом. */
+  question: string;
+  options: string[];
 }
 
 /** Ищет вопрос по id внутри варианта. Только сервер. */
@@ -175,6 +178,8 @@ export function findQuizQuestion(
     optionsCount: found.options.length,
     fact: found.fact ?? null,
     theme: found.theme,
+    question: found.question,
+    options: found.options,
   };
 }
 

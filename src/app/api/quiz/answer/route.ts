@@ -82,10 +82,18 @@ export function POST(request: Request) {
       activity,
       points,
       rawResult: String(answerIndex),
+      // Тексты сохраняем вместе с номерами: банк вопросов могут поправить,
+      // и тогда по одному questionId уже нельзя будет понять, что спрашивали
+      // и что человек ответил. Журнал должен читаться и через год.
       meta: {
         questionId,
+        variant,
+        theme: question.theme,
+        question: question.question,
         level: question.level,
         answerIndex,
+        answer: question.options[answerIndex] ?? null,
+        correctAnswer: question.options[question.correctIndex] ?? null,
         correct,
         bet: outcome.betApplied,
         kind: 'answer',
