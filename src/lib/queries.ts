@@ -567,3 +567,11 @@ export async function getDayStats(day = todayLocal()): Promise<DayStats> {
     byActivity,
   };
 }
+
+/** Дни, когда на стенде кто-то был, новые сверху — для выбора дня в статистике. */
+export async function listEventDays(): Promise<string[]> {
+  const rows = await sql<{ day: string }>(
+    `SELECT DISTINCT to_char(event_day, 'YYYY-MM-DD') AS day FROM visits ORDER BY day DESC`,
+  );
+  return rows.map((r) => r.day);
+}

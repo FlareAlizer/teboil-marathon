@@ -20,10 +20,15 @@ export const dynamic = 'force-dynamic';
  * `rank` — место в старом общем лидерборде (по сумме всех баллов), оставлено
  * для совместимости. `ratings` — места в четырёх рейтингах дня.
  */
-export function GET(_request: Request, ctx: { params: Promise<{ id: string }> }) {
+export function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
   return handle(async () => {
     const { id: rawId } = await ctx.params;
     const id = parseId(rawId, 'id игрока');
+
+    // ?day= — за какой день считать баллы дня и места в рейтингах (по умолчанию сегодня).
+    const url = new URL(request.url);
+    const dayParam = url.searchParams.get('day');
+    const day = dayParam && /^\d{4}-\d{2}-\d{2}$/.test(dayParam) ? dayParam : todayLocal();
 
     const player = await findPlayerById(id);
     if (!player) return jsonError('Участник не найден', 404);
@@ -34,9 +39,9 @@ export function GET(_request: Request, ctx: { params: Promise<{ id: string }> })
       createdAt: player.createdAt,
       eventDay: player.eventDay,
       totalPoints: await getTotalPoints(id),
-      todayPoints: await getTotalPoints(id, todayLocal()),
+      todayPoints: await getTotalPoints(id, day),
       rank: await getPlayerRank(id),
-      ratings: await getPlayerRatings(id),
+      ratings: await getPlayerRatings(id, day),
       events: await getPlayerEvents(id),
     });
   });

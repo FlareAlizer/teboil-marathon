@@ -39,9 +39,15 @@ export async function checkSession(): Promise<boolean> {
 /* --------------------------------- Игроки -------------------------------- */
 
 /** Пустой запрос возвращает участников сегодняшнего дня. */
-export async function searchPlayers(q: string, limit = 20): Promise<PlayerSummary[]> {
+/** Пустой запрос и `day` — участники этого дня; баллы дня — за него же. */
+export async function searchPlayers(
+  q: string,
+  limit = 20,
+  day?: string,
+): Promise<PlayerSummary[]> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (q) params.set('q', q);
+  if (day) params.set('day', day);
   const data = await adminFetch<{ players: PlayerSummary[] }>(
     `/api/players/search?${params.toString()}`,
   );
@@ -70,8 +76,10 @@ export interface PlayerCard {
   events: ScoreEvent[];
 }
 
-export function getPlayer(id: number): Promise<PlayerCard> {
-  return adminFetch<PlayerCard>(`/api/players/${id}`);
+/** Карточка участника; баллы дня и места в рейтингах — за `day` (по умолчанию сегодня). */
+export function getPlayer(id: number, day?: string): Promise<PlayerCard> {
+  const qs = day ? `?day=${day}` : '';
+  return adminFetch<PlayerCard>(`/api/players/${id}${qs}`);
 }
 
 /* --------------------------------- Баллы --------------------------------- */
@@ -110,9 +118,12 @@ export function deleteScore(id: number): Promise<DeleteScoreResult> {
 
 /* ------------------------------- Статистика ------------------------------- */
 
-export function getStats(day?: string): Promise<DayStats> {
+/** Счётчики дня и список всех дней, когда стенд работал. */
+export type DayStatsWithDays = DayStats & { days: string[] };
+
+export function getStats(day?: string): Promise<DayStatsWithDays> {
   const qs = day ? `?day=${encodeURIComponent(day)}` : '';
-  return adminFetch<DayStats>(`/api/stats${qs}`);
+  return adminFetch<DayStatsWithDays>(`/api/stats${qs}`);
 }
 
 /* ------------------------------- Лидерборд -------------------------------- */
