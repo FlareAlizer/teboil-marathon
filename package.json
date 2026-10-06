@@ -2,7 +2,7 @@
   "name": "teboil-marathon",
   "version": "1.0.0",
   "private": true,
-  "description": "Геймификация стенда Teboil на беговом марафоне",
+  "description": "Геймификация стенда Teboil на Красно-белом забеге",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

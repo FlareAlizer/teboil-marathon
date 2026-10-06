@@ -33,7 +33,7 @@ export function LeaderboardHeader({ title = 'Топ дня' }: { title?: string 
         </SkewedPlate>
 
         <span className="font-display text-[4vh] font-black leading-none text-teboil-blue">
-          Беговой марафон
+          Красно-белый забег
         </span>
       </div>
 
