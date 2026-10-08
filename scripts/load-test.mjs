@@ -1,7 +1,11 @@
 /**
  * Нагрузочный тест стенда.
  *
- *   node scripts/load-test.mjs [http://localhost:3000] [пароль_админа]
+ *   node scripts/load-test.mjs [http://localhost:3000] [пароль_админа] [10,25,50]
+ *
+ * Адресов можно передать несколько через запятую — запросы пойдут по ним
+ * по очереди, как их раскладывает nginx по рабочим процессам. Третий
+ * аргумент — уровни одновременных участников.
  *
  * Моделирует реальный сценарий мероприятия, а не абстрактные запросы:
  * участник входит, берёт квиз, отвечает на три вопроса, смотрит станции;
@@ -12,10 +16,19 @@
  * ошибок. Средним не пользуемся — оно прячет выбросы.
  */
 
-const BASE = process.argv[2] ?? 'http://localhost:3000';
+const BASES = (process.argv[2] ?? 'http://localhost:3000').split(',');
+const BASE = BASES[0];
 const ADMIN_PASSWORD = process.argv[3] ?? 'teboil2026';
 
-const LEVELS = [10, 25, 50, 100, 200];
+const LEVELS = process.argv[4]
+  ? process.argv[4].split(',').map(Number)
+  : [10, 25, 50, 100, 200];
+
+let nextBase = 0;
+function pickBase() {
+  nextBase = (nextBase + 1) % BASES.length;
+  return BASES[nextBase];
+}
 
 function percentile(sorted, p) {
   if (sorted.length === 0) return 0;
@@ -60,7 +73,7 @@ async function timed(stats, fn) {
 }
 
 async function call(path, init) {
-  const response = await fetch(`${BASE}${path}`, { cache: 'no-store', ...init });
+  const response = await fetch(`${pickBase()}${path}`, { cache: 'no-store', ...init });
   const body = await response.json().catch(() => null);
   if (!response.ok || body?.ok === false) throw new Error(`HTTP ${response.status}`);
   return body?.data;
@@ -80,7 +93,8 @@ async function participant(id, run, stats) {
   const player = await timed(stats.login, () => post('/api/players', { nickname }));
   if (!player) return;
 
-  const quiz = await timed(stats.quiz, () => call('/api/quiz?variant=v1'));
+  // С playerId, как просит сайт: сервер ещё ищет уже отвеченные вопросы.
+  const quiz = await timed(stats.quiz, () => call(`/api/quiz?variant=v1&playerId=${player.id}`));
   if (!quiz) return;
 
   // По одному вопросу на каждый из трёх уровней — как в реальной попытке.
@@ -101,10 +115,11 @@ async function participant(id, run, stats) {
   return player.id;
 }
 
-/** Телевизор: опрос четырёх рейтингов, пока идёт волна участников. */
+/** Телевизор: опрос четырёх рейтингов и счётчиков дня, пока идёт волна участников. */
 async function screenPolling(stats, stop) {
   while (!stop.done) {
     await timed(stats.board, () => call('/api/ratings?limit=10'));
+    await timed(stats.board, () => call('/api/stats'));
     await new Promise((r) => setTimeout(r, 300));
   }
 }

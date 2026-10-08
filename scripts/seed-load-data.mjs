@@ -24,7 +24,25 @@ function databaseUrl() {
 const client = new pg.Client({ connectionString: databaseUrl() });
 await client.connect();
 
-const day = new Date().toISOString().slice(0, 10);
+// День — по местному времени, как его считает сайт (todayLocal в db.ts).
+// toISOString дал бы дату по UTC, и ночью данные легли бы во вчерашний день.
+const now = new Date();
+const day = [
+  now.getFullYear(),
+  String(now.getMonth() + 1).padStart(2, '0'),
+  String(now.getDate()).padStart(2, '0'),
+].join('-');
+
+/** Результат станции, как его записал бы волонтёр: без него запись не попадёт в рейтинг. */
+function stationResult(activity, n) {
+  if (activity === 'sport_keepups') return { raw: String(n % 60), meta: {} };
+  if (activity === 'sport_darts') return { raw: String((n * 7) % 180), meta: {} };
+  if (activity === 'sport_obstacle') {
+    const time = 15 + (n % 300) / 10;
+    return { raw: String(time), meta: { goal: n % 3 !== 0, timeSec: time } };
+  }
+  return { raw: null, meta: {} };
+}
 const activities = [
   'quiz_roulette_v1', 'quiz_roulette_v2', 'sport_keepups',
   'sport_obstacle', 'sport_goal', 'sport_darts', 'manual',
@@ -54,18 +72,21 @@ for (let i = 0; i < PLAYERS; i += 1) {
   const values = [];
   const params = [];
   for (let e = 0; e < EVENTS_PER; e += 1) {
-    const base = e * 5;
-    values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5})`);
+    const base = e * 6;
+    const activity = activities[(i + e) % activities.length];
+    const station = stationResult(activity, i * 31 + e);
+    values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`);
     params.push(
       id,
-      activities[e % activities.length],
+      activity,
       5 + ((e * 7) % 40),
-      JSON.stringify({ kind: 'seed', level: (e % 3) + 1 }),
+      station.raw,
+      JSON.stringify({ kind: 'seed', level: (e % 3) + 1, ...station.meta }),
       day,
     );
   }
   await client.query(
-    `INSERT INTO score_events (player_id, activity, points, meta, event_day)
+    `INSERT INTO score_events (player_id, activity, points, raw_result, meta, event_day)
      VALUES ${values.join(', ')}`,
     params,
   );
