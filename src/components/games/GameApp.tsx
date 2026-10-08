@@ -166,6 +166,7 @@ function LoginScreen({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(initialError);
   const [tgUrl, setTgUrl] = useState<string | null>(null);
+  const [tgStuck, setTgStuck] = useState(false);
 
   // Кнопка появляется, только если на сервере настроен бот. Внутри самого
   // Telegram она не нужна: туда участник попадает уже с готовым входом.
@@ -226,15 +227,29 @@ function LoginScreen({
             {/* Самый быстрый путь со своего телефона: одно касание, и игра
                 открывается в Telegram уже под твоим аккаунтом. */}
             <a
-              href={tgUrl}
+              href={tgLink(tgUrl)}
+              onClick={() => {
+                // Если через пару секунд страница всё ещё на экране, приложение
+                // не открылось (нет Telegram или браузер не пустил) — подсказываем.
+                setTimeout(() => {
+                  if (document.visibilityState === 'visible') setTgStuck(true);
+                }, 2500);
+              }}
               className="flex min-h-tap-xl items-center justify-center gap-3 bg-[#2AABEE] px-5 font-display text-kiosk-base font-black text-white active:bg-[#229ED9]"
             >
               <TelegramIcon />
               Войти через Telegram
             </a>
-            <p className="mb-6 mt-2 text-center text-[14px] font-medium text-teboil-muted">
-              Ничего вводить не нужно
-            </p>
+            {tgStuck ? (
+              <p className="mb-6 mt-2 bg-teboil-surface px-3 py-2 text-[14px] font-medium leading-snug text-teboil-black">
+                Telegram не открылся? Не страшно — впиши свой юзернейм ниже. Он есть в
+                Telegram: Настройки → Имя пользователя.
+              </p>
+            ) : (
+              <p className="mb-6 mt-2 text-center text-[14px] font-medium text-teboil-muted">
+                Ничего вводить не нужно
+              </p>
+            )}
             <p className="mb-3 text-center text-kiosk-sm font-bold text-teboil-muted">
               или впиши юзернейм вручную
             </p>
@@ -278,6 +293,26 @@ function LoginScreen({
       </div>
     </main>
   );
+}
+
+const TG_APP_LINK = /^https?:\/\/t\.me\/([A-Za-z0-9_]+)\/([A-Za-z0-9_]+)\/?$/;
+
+/**
+ * Куда ведёт кнопка «Войти через Telegram».
+ *
+ * Обычная ссылка `https://t.me/бот/приложение` на андроиде сначала грузит сайт
+ * t.me в браузере, а он из России без VPN не открывается — участник видел
+ * ERR_TIMED_OUT и думал, что сломан наш сайт. Ссылка `tg://` открывает само
+ * приложение Telegram, минуя t.me.
+ *
+ * На айфоне оставляем https: там система сама перехватывает такую ссылку и
+ * открывает приложение без захода на сайт, а на `tg://` Safari задаёт лишний
+ * вопрос «Открыть в Telegram?».
+ */
+function tgLink(url: string): string {
+  const m = TG_APP_LINK.exec(url);
+  const ios = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+  return m && !ios ? `tg://resolve?domain=${m[1]}&appname=${m[2]}` : url;
 }
 
 /** Бумажный самолётик Telegram — по нему кнопку узнают без чтения. */
