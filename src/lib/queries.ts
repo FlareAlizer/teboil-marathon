@@ -320,7 +320,7 @@ export async function addScoreEvent(input: AddScoreInput): Promise<AddScoreResul
     return result.rows[0] ?? null;
   });
 
-  invalidateBoardCache();
+  invalidateBoardCache(input.activity);
 
   if (!inserted) {
     // Вставки не было: сработал уникальный индекс — на ответ квиза или на
@@ -431,8 +431,8 @@ export async function getActivityEventsToday(
  * телевизор опрашивает его каждые 10 секунд, плюс он открывается на экране
  * станций у каждого участника.
  *
- * Держим его в памяти процесса пару секунд и сбрасываем при любой записи
- * баллов, поэтому устаревшие данные сразу после начисления он не покажет.
+ * Держим его в памяти процесса пару секунд; когда сбрасываем раньше — см.
+ * invalidateBoardCache ниже.
  *
  * При нескольких рабочих процессах сброс локален: чужая запись становится
  * видна в пределах этих двух секунд. Для экрана, который и так обновляется
@@ -441,7 +441,17 @@ export async function getActivityEventsToday(
 const boardCache = new Map<string, { at: number; rows: LeaderboardRow[] }>();
 const BOARD_TTL_MS = 2000;
 
-function invalidateBoardCache(): void {
+/**
+ * Ответы квиза кеш НЕ сбрасывают. Их сотни в минуту, и сброс на каждый ответ
+ * означал, что рейтинги по всему дню пересчитываются почти на каждый запрос:
+ * в нагрузочном тесте на 10 000 участников экран станций открывался по
+ * несколько секунд. Рейтинг квиза догоняет сам за 3 секунды (TTL в ratings.ts).
+ *
+ * Записи станций, ручные начисления и отмены редкие, а волонтёр должен сразу
+ * увидеть в таблице то, что записал, — они сбрасывают кеш немедленно.
+ */
+function invalidateBoardCache(activity?: Activity): void {
+  if (activity?.startsWith('quiz_')) return;
   boardCache.clear();
   invalidateStats();
   invalidateRatings();

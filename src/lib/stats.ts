@@ -5,9 +5,11 @@ import { ACTIVITIES, type Activity, type DayStats } from './types';
    Статистика дня для панели и телевизора.
    ========================================================================== */
 
-/** Сбрасывается при каждом начислении и отмене — см. queries.ts. */
+/** Сбрасывается при записях станций и отменах — см. queries.ts. */
 export function invalidateStats(): void {
+  generation += 1;
   statsCache.clear();
+  inflight.clear();
 }
 
 export async function getDayStats(day = todayLocal()): Promise<DayStats> {
@@ -69,19 +71,37 @@ export async function getDayStats(day = todayLocal()): Promise<DayStats> {
 /**
  * Счётчики дня читают телевизор (каждые 10 секунд) и каждая открытая панель.
  * Это свод по всем начислениям дня, поэтому ответ держится в памяти процесса
- * пять секунд. Сбрасывается при каждом начислении и отмене (invalidateBoardCache),
- * так что оператор сразу видит свою запись в цифрах.
+ * пять секунд. Записи станций, ручные начисления и отмены сбрасывают его сразу
+ * (invalidateBoardCache), так что оператор тут же видит свою запись в цифрах.
+ *
+ * Одновременные запросы после истечения кеша ждут один пересчёт, а не
+ * запускают каждый свой; пересчёт, начатый до сброса, в кеш не кладётся.
  */
-const statsCache = new Map<string, { at: number; value: DayStats & { days: string[] } }>();
+type StatsWithDays = DayStats & { days: string[] };
+const statsCache = new Map<string, { at: number; value: StatsWithDays }>();
+const inflight = new Map<string, Promise<StatsWithDays>>();
+let generation = 0;
 const STATS_TTL_MS = 5000;
 
-export async function getDayStatsCached(day = todayLocal()): Promise<DayStats & { days: string[] }> {
+export async function getDayStatsCached(day = todayLocal()): Promise<StatsWithDays> {
   const hit = statsCache.get(day);
   if (hit && Date.now() - hit.at < STATS_TTL_MS) return hit.value;
 
-  const value = { ...(await getDayStats(day)), days: await listEventDays() };
-  statsCache.set(day, { at: Date.now(), value });
-  return value;
+  const running = inflight.get(day);
+  if (running) return running;
+
+  const startedIn = generation;
+  const query = Promise.all([getDayStats(day), listEventDays()])
+    .then(([stats, days]) => {
+      const value = { ...stats, days };
+      if (startedIn === generation) statsCache.set(day, { at: Date.now(), value });
+      return value;
+    })
+    .finally(() => {
+      if (inflight.get(day) === query) inflight.delete(day);
+    });
+  inflight.set(day, query);
+  return query;
 }
 
 /** Дни, когда на стенде кто-то был, новые сверху — для выбора дня в статистике. */

@@ -24,17 +24,30 @@ import {
  */
 const FULL_BOARD = 50000;
 /**
- * Три секунды. На дне с 10 000 участников рейтинг квиза — это свод по сотням
- * тысяч начислений, и пересчитывать его на каждый запрос нельзя; а задержка
- * в пару секунд на телевизоре и в карточке участника незаметна.
+ * Три секунды. На дне с 10 000 участников рейтинг квиза — это свод по сотне
+ * тысяч начислений (около 150 мс в базе), и пересчитывать его на каждый
+ * запрос нельзя; а задержка в пару секунд на телевизоре и в карточке
+ * участника незаметна.
  */
 const TTL_MS = 3000;
 
 const cache = new Map<string, { at: number; rows: RatingRow[] }>();
+/**
+ * Пересчёт, который уже идёт. Сотня одновременных запросов после истечения
+ * кеша ждёт один и тот же запрос к базе, а не запускает сотню своих.
+ */
+const inflight = new Map<string, Promise<RatingRow[]>>();
+/**
+ * Номер «поколения» кеша. Пересчёт, начатый до сброса, мог не увидеть новую
+ * запись — его результат в кеш не кладём.
+ */
+let generation = 0;
 
-/** Сбрасывается при каждом начислении и отмене — см. queries.ts. */
+/** Сбрасывается при записях станций и отменах — см. queries.ts. */
 export function invalidateRatings(): void {
+  generation += 1;
   cache.clear();
+  inflight.clear();
 }
 
 interface Row {
@@ -109,9 +122,20 @@ async function fullBoard(id: RatingId, day: string): Promise<RatingRow[]> {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.rows;
 
-  const rows = await queryBoard(id, day);
-  cache.set(key, { at: Date.now(), rows });
-  return rows;
+  const running = inflight.get(key);
+  if (running) return running;
+
+  const startedIn = generation;
+  const query = queryBoard(id, day)
+    .then((rows) => {
+      if (startedIn === generation) cache.set(key, { at: Date.now(), rows });
+      return rows;
+    })
+    .finally(() => {
+      if (inflight.get(key) === query) inflight.delete(key);
+    });
+  inflight.set(key, query);
+  return query;
 }
 
 export async function getRating(
