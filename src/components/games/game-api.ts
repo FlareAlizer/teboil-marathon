@@ -223,3 +223,21 @@ export function completeQuiz(
   return post<QuizCompleteResponse>('/api/quiz/complete', { playerId, variant });
 }
 
+
+/* ------------------------------ Отметки шагов ------------------------------ */
+
+/**
+ * Отметка шага в журнале сервера (см. /api/trace). Нужна, чтобы по журналу
+ * было видно, где участники застревают при входе. Никогда не мешает игре:
+ * ошибки сети здесь молча игнорируются, ответа никто не ждёт.
+ */
+export function trace(event: string): void {
+  try {
+    void fetch(`/api/trace?e=${encodeURIComponent(event)}`, {
+      cache: 'no-store',
+      keepalive: true,
+    }).catch(() => undefined);
+  } catch {
+    // Отметка — не часть игры: не получилось, и ладно.
+  }
+}

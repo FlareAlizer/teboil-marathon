@@ -16,6 +16,7 @@ import {
   readTelegramInitData,
   savePlayer,
   telegramLogin,
+  trace,
   type CurrentPlayer,
 } from './game-api';
 import { RouletteQuiz } from './RouletteQuiz';
@@ -50,10 +51,16 @@ export function GameApp() {
     // осталось в памяти браузера.
     const initData = readTelegramInitData();
     if (!initData) {
-      setPlayer(loadPlayer());
+      const saved = loadPlayer();
+      // Отметка «приложение запустилось»: страницу сервер отдаёт всегда, а вот
+      // дошли ли до телефона скрипты, по журналу иначе не понять.
+      trace(saved ? 'start_saved' : 'start_new');
+      setPlayer(saved);
       setReady(true);
       return;
     }
+
+    trace('start_in_telegram');
 
     expandTelegramView();
     telegramLogin(initData)
@@ -229,10 +236,21 @@ function LoginScreen({
             <a
               href={tgLink(tgUrl)}
               onClick={() => {
+                trace(tgLink(tgUrl).startsWith('tg:') ? 'tg_click_app' : 'tg_click_https');
+                // Вернулся на страницу после ухода — значит, в Telegram войти
+                // не получилось (иначе игра продолжилась бы там).
+                const onBack = () => {
+                  if (document.visibilityState !== 'visible') return;
+                  trace('tg_came_back');
+                  document.removeEventListener('visibilitychange', onBack);
+                };
+                document.addEventListener('visibilitychange', onBack);
                 // Если через пару секунд страница всё ещё на экране, приложение
                 // не открылось (нет Telegram или браузер не пустил) — подсказываем.
                 setTimeout(() => {
-                  if (document.visibilityState === 'visible') setTgStuck(true);
+                  if (document.visibilityState !== 'visible') return;
+                  trace('tg_not_opened');
+                  setTgStuck(true);
                 }, 2500);
               }}
               className="flex min-h-tap-xl items-center justify-center gap-3 bg-[#2AABEE] px-5 font-display text-kiosk-base font-black text-white active:bg-[#229ED9]"
