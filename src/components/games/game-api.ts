@@ -53,12 +53,37 @@ export function clearPlayer(): void {
 
 export class GameApiError extends Error {}
 
+/** Сколько ждём ответа. Без предела «Загружаем вопросы…» на плохой сети висело бы минутами. */
+const TIMEOUT_MS = 12_000;
+
+async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    return await fetch(url, { cache: 'no-store', ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   let response: Response;
-  try {
-    response = await fetch(url, { cache: 'no-store', ...init });
-  } catch {
-    throw new GameApiError('Нет связи с сервером стенда');
+
+  // Чтение (вопросы, рейтинги) повторяем сами: мобильная сеть на площадке
+  // теряет отдельные запросы. Отправку ответа не повторяем — участник просто
+  // нажмёт ещё раз, а сервер не засчитает один вопрос дважды.
+  const attempts = !init?.method || init.method === 'GET' ? 3 : 1;
+
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      response = await fetchWithTimeout(url, init);
+      break;
+    } catch {
+      if (attempt >= attempts) {
+        throw new GameApiError('Нет связи с сервером. Проверь интернет и попробуй ещё раз');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 700 * attempt));
+    }
   }
 
   let payload: ApiResponse<T> | null = null;

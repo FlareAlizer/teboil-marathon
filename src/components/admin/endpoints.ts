@@ -24,15 +24,18 @@ import { adminFetch, adminPost } from './admin-api';
 /* --------------------------------- Сессия -------------------------------- */
 
 /**
- * Жив ли вход оператора. Эндпоинт всегда отвечает 200, поэтому обычный
- * fetch: показывать форму входа тут решаем мы сами, а не обработчик 401.
+ * Жив ли вход оператора: 'in' — да, 'out' — нет, 'offline' — сервер не ответил.
+ *
+ * Третий ответ важен. Раньше обрыв связи считался «входа нет», и панель
+ * показывала форму пароля, хотя вход действовал: на площадке с плохим
+ * мобильным интернетом это выглядело как «меня выкинуло».
  */
-export async function checkSession(): Promise<boolean> {
+export async function checkSession(): Promise<'in' | 'out' | 'offline'> {
   try {
     const data = await adminFetch<{ authenticated: boolean }>('/api/admin/session');
-    return data.authenticated;
+    return data.authenticated ? 'in' : 'out';
   } catch {
-    return false;
+    return 'offline';
   }
 }
 

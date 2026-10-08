@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Montserrat } from 'next/font/google';
 import './globals.css';
+import { ErrorReporter } from '@/components/ErrorReporter';
 
 /**
  * Единственная гарнитура дизайн-бука. Medium 500 / Bold 700 / Black 900.
@@ -36,6 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="ru" className={montserrat.variable}>
       <body className="min-h-dvh bg-teboil-white font-sans text-teboil-black antialiased no-select">
+        <ErrorReporter />
         {children}
       </body>
     </html>

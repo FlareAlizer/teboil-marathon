@@ -97,11 +97,19 @@ export function StatsTab() {
         ))}
       </div>
 
-      {error && (
-        <p role="alert" className="bg-teboil-red px-4 py-3 text-kiosk-sm font-bold text-white">
-          {error}
-        </p>
-      )}
+      {/* Данные уже на экране — значит, это просто пропавший опрос: цифры
+          остаются, следующая попытка через несколько секунд. Красным пишем,
+          только когда показать вообще нечего. */}
+      {error &&
+        (stats ? (
+          <p className="text-center text-[14px] font-medium text-teboil-muted">
+            Связь пропала — показаны последние данные, обновлю сам
+          </p>
+        ) : (
+          <p role="alert" className="bg-teboil-red px-4 py-3 text-kiosk-sm font-bold text-white">
+            {error}
+          </p>
+        ))}
 
       {stats && (
         <div className="grid grid-cols-3 gap-2">

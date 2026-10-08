@@ -53,6 +53,20 @@ function messageFor(status: number): string {
   return 'Не удалось выполнить запрос';
 }
 
+/** Сколько ждём ответа. Без предела запрос на плохой сети висел бы минутами. */
+const TIMEOUT_MS = 12_000;
+
+/** fetch с пределом ожидания: зависший запрос превращается в обычную ошибку сети. */
+export async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Запрос к админ-API. Возвращает полезные данные из конверта ApiResponse.
  * Бросает AdminUnauthorizedError при 401 и AdminApiError в остальных случаях.
@@ -60,15 +74,33 @@ function messageFor(status: number): string {
 export async function adminFetch<T>(url: string, init?: RequestInit): Promise<T> {
   let response: Response;
 
-  try {
-    response = await fetch(url, {
-      cache: 'no-store',
-      credentials: 'same-origin',
-      ...init,
-    });
-  } catch {
-    // Стенд может на секунду потерять сеть — это не потеря сессии.
-    throw new AdminApiError('Нет связи с сервером', 0);
+  // Чтение можно спокойно повторить: мобильная сеть на площадке теряет
+  // отдельные запросы, и пугать волонтёра красной ошибкой из-за одного
+  // пропавшего опроса незачем. Запись (POST, DELETE) не повторяем сами —
+  // иначе результат мог бы записаться дважды; там решает человек.
+  const readOnly = !init?.method || init.method === 'GET';
+  const attempts = readOnly ? 3 : 1;
+
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      response = await fetchWithTimeout(url, {
+        cache: 'no-store',
+        credentials: 'same-origin',
+        ...init,
+      });
+      break;
+    } catch {
+      if (attempt >= attempts) {
+        // Стенд может на секунду потерять сеть — это не потеря сессии.
+        throw new AdminApiError(
+          readOnly
+            ? 'Нет связи с сервером — проверь интернет'
+            : 'Нет связи с сервером — запись НЕ сохранена, нажми ещё раз',
+          0,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 700 * attempt));
+    }
   }
 
   if (response.status === 401) {
