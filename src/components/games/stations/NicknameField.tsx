@@ -14,9 +14,8 @@ export interface NicknameFieldProps
 }
 
 /**
- * Поле ввода ника со скошенной кнопкой-стрелкой (макет 5:21, состояние
- * с ошибкой — 11:139 и 31:588). Ник любой: «Петя Солдат» или юзернейм
- * из Телеграма.
+ * Поле ввода юзернейма со скошенной кнопкой-стрелкой (макет 5:21, состояние
+ * с ошибкой — 11:139 и 31:588).
  *
  * Валидации здесь нет никакой: ни нормализации, ни проверки длины. Правила
  * живут в `src/lib/validation.ts` и в вызывающем экране — тянуть их
@@ -34,7 +33,7 @@ export const NicknameField = forwardRef<HTMLInputElement, NicknameFieldProps>(
           htmlFor={inputId}
           className="mb-2 block font-display text-[15px] font-bold text-teboil-blue"
         >
-          Твой ник
+          Юзернейм в Телеграме
         </label>
 
         <div className="flex items-stretch gap-2">

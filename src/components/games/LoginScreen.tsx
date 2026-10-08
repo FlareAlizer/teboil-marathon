@@ -9,8 +9,10 @@ import { errorText, login, type CurrentPlayer } from './game-api';
 /* ---------------------------------- Вход ---------------------------------- */
 
 /**
- * Вход в игру — одно поле. Человек вписывает ник («Петя Солдат» или свой
- * юзернейм из Телеграма) и сразу играет. Ни приложений, ни сторонних сайтов:
+ * Вход в игру — одно поле. Подсказка просит юзернейм из Телеграма: он у
+ * человека уникален, и волонтёр легко найдёт его по нему. Сервер при этом
+ * примет и обычный ник, так что без Телеграма в игру тоже не закрыто.
+ * Ни приложений, ни сторонних сайтов:
  * всё, что нужно для входа, — это наш сайт, поэтому вход одинаково работает
  * на любом телефоне, с VPN и без.
  */
@@ -54,12 +56,12 @@ export function LoginScreen({ onLogin }: { onLogin: (p: CurrentPlayer) => void }
       <div className="flex flex-1 items-center justify-center gap-16 px-5 pb-10 pt-8">
         <div className="flex w-full flex-col justify-center lg:max-w-[480px]">
           <h1 className="mb-4 font-display text-[2rem] font-black leading-tight text-teboil-black">
-            Придумай <span className="text-teboil-red">ник</span>
+            Твой <span className="text-teboil-red">юзернейм</span> в Телеграме
           </h1>
           <p className="mb-8 text-kiosk-sm font-medium leading-snug text-teboil-muted">
-            Под ним ты попадёшь в рейтинг, а волонтёр на станциях найдёт тебя по
-            нему. Подойдёт имя с фамилией или прозвищем — например, «Петя
-            Солдат» — или твой юзернейм из Телеграма.
+            По нему начисляются баллы и выдаются призы, а волонтёр на станциях
+            найдёт тебя по нему. Где его взять: Telegram → Настройки → Имя
+            пользователя. Можно скопировать и вставить вместе с «@».
           </p>
 
           {/* Поле со скошенной кнопкой-стрелкой — как на макете 5:21, а
@@ -74,16 +76,13 @@ export function LoginScreen({ onLogin }: { onLogin: (p: CurrentPlayer) => void }
             }}
             onSubmit={() => void submit()}
             error={error}
-            placeholder="Петя Солдат"
+            placeholder="@username"
             maxLength={48}
             disabled={busy}
           />
 
           <p className="mt-6 text-kiosk-sm font-medium leading-snug text-teboil-muted">
-            Уже играл? Введи тот же ник — баллы сохранятся.
-            <br />
-            Ник общий для всех: выбери такой, чтобы не совпасть с другими, — не
-            просто «Петя».
+            Уже играл? Введи тот же юзернейм — баллы сохранятся.
           </p>
 
           {/* Вход для волонтёра. Намеренно неброский: участнику он не нужен,
