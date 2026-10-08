@@ -67,15 +67,48 @@ export const TELEGRAM_HINT =
 export function normalizeTelegramUsername(input: unknown): string {
   if (typeof input !== 'string') fail('Укажите юзернейм в Телеграме');
 
-  // Срезаем только края и «собаку». Пробелы ВНУТРИ не удаляем: иначе
-  // «fast fox» молча превратился бы в @fastfox — возможно, чужой аккаунт,
-  // и человек копил бы баллы не себе.
-  const value = input.trim().replace(/^@+/, '').trim();
+  // Срезаем только края, «собаку» и ссылку на профиль (t.me/name — её часто
+  // копируют прямо из Telegram). Пробелы ВНУТРИ не удаляем: иначе «fast fox»
+  // молча превратился бы в @fastfox — возможно, чужой аккаунт, и человек
+  // копил бы баллы не себе.
+  const value = input
+    .trim()
+    .replace(/^(https?:\/\/)?(www\.)?(t|telegram)\.me\//i, '')
+    .replace(/^@+/, '')
+    .replace(/\/+$/, '')
+    .trim();
 
   if (value === '') fail('Укажите юзернейм в Телеграме');
-  if (!TELEGRAM_RE.test(value)) fail(TELEGRAM_HINT);
+  if (!TELEGRAM_RE.test(value)) fail(telegramMistake(value));
 
   return value;
+}
+
+const WHERE = 'Он есть в Telegram: Настройки → Имя пользователя.';
+const OR_BUTTON = 'Или нажми «Войти через Telegram» — тогда вводить ничего не нужно.';
+
+/**
+ * Что именно не так с введённым юзернеймом. Одна общая фраза про «латиницу
+ * от 5 символов» не помогала: по логам участник пробовал восемь раз подряд,
+ * прежде чем вошёл. Поэтому называем конкретную ошибку и где взять верный.
+ */
+function telegramMistake(value: string): string {
+  if (/[а-яё]/i.test(value)) {
+    return `Юзернейм пишется латиницей — это не имя, а адрес в Telegram. ${WHERE} ${OR_BUTTON}`;
+  }
+  if (/^\+?[\d\s()-]{6,}$/.test(value)) {
+    return `Это похоже на номер телефона, а нужен юзернейм. ${WHERE} ${OR_BUTTON}`;
+  }
+  if (/\s/.test(value)) {
+    return `В юзернейме не бывает пробелов. ${WHERE}`;
+  }
+  if (value.length < 5) {
+    return `Слишком короткий: в Telegram юзернейм от 5 символов. ${WHERE}`;
+  }
+  if (/^[\d_]/.test(value)) {
+    return `Юзернейм начинается с латинской буквы. ${WHERE}`;
+  }
+  return `${TELEGRAM_HINT}. ${WHERE}`;
 }
 
 /** Похоже ли имя на телеграм-юзернейм — от этого зависит показ «@» на экранах. */
