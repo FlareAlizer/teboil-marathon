@@ -1,5 +1,7 @@
 import { handle, jsonError, jsonOk } from '@/lib/api';
 import { requireAdmin } from '@/lib/auth';
+import { todayLocal } from '@/lib/db';
+import { logEvent } from '@/lib/log';
 import { addScoreEvent, deleteScoreEvent, findPlayerById } from '@/lib/queries';
 import { SCORING } from '@/lib/scoring';
 import {
@@ -55,6 +57,14 @@ export function POST(request: Request) {
 
     if (!await findPlayerById(playerId)) return jsonError('Участник не найден', 404);
 
+    // Запись из очереди устройства: к какому дню она относится. Задержку
+    // клиент меряет по своим часам, а момент ввода считаем по часам сервера —
+    // так неверное время на планшете ни на что не влияет. Больше 36 часов не
+    // принимаем: такая запись относится к сегодняшнему дню.
+    const queuedMs = Number(body.queuedMs);
+    const delay = Number.isFinite(queuedMs) && queuedMs > 0 && queuedMs < 36 * 3600_000 ? queuedMs : 0;
+    const day = delay > 0 ? todayLocal(new Date(Date.now() - delay)) : undefined;
+
     const result = await addScoreEvent({
       playerId,
       activity,
@@ -62,6 +72,19 @@ export function POST(request: Request) {
       rawResult: entry.rawResult,
       meta: entry.meta,
       createdBy: 'admin',
+      day,
+    });
+
+    void logEvent('score_add', {
+      player: playerId,
+      activity,
+      points,
+      raw: entry.rawResult,
+      cid: clientId,
+      queuedS: delay ? Math.round(delay / 1000) : undefined,
+      day: day ?? undefined,
+      event: result.event.id,
+      dup: result.duplicate ?? false,
     });
 
     return jsonOk(result, 201);
@@ -82,6 +105,7 @@ export function DELETE(request: Request) {
 
     const result = await deleteScoreEvent(id);
     if (!result) return jsonError('Начисление не найдено', 404);
+    void logEvent('score_delete', { event: id, player: result.playerId, points: result.points });
 
     return jsonOk(result);
   });

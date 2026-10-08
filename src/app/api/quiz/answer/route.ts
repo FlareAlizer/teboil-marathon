@@ -8,6 +8,7 @@ import {
   getTotalPoints,
 } from '@/lib/queries';
 import { todayLocal } from '@/lib/db';
+import { logEvent } from '@/lib/log';
 import { parseBool, parseId, parseInt_, readJson } from '@/lib/validation';
 
 export const runtime = 'nodejs';
@@ -59,8 +60,12 @@ export function POST(request: Request) {
      * не дождался ответа, просто спрашивает ещё раз и показывает участнику
      * настоящий результат — а подобрать верный вариант повтором нельзя.
      */
-    const repeatOf = async (event: { points: number; meta: Record<string, unknown> | null }) =>
-      jsonOk({
+    const repeatOf = async (event: { points: number; meta: Record<string, unknown> | null }) => {
+      void logEvent('quiz_answer', {
+        player: playerId, variant, q: questionId, level: question.level,
+        correct: event.meta?.correct === true, points: event.points, repeat: true,
+      });
+      return jsonOk({
         correct: event.meta?.correct === true,
         correctIndex: question.correctIndex,
         fact: question.fact,
@@ -72,6 +77,7 @@ export function POST(request: Request) {
         totalPoints: await getTotalPoints(playerId),
         todayPoints: await getTotalPoints(playerId, todayLocal()),
       });
+    };
 
     const previous = answeredEvents.find((e) => e.meta?.questionId === questionId);
     if (previous) return repeatOf(previous);
@@ -108,6 +114,11 @@ export function POST(request: Request) {
     // Вопрос уже был отвечен (в другой день или параллельным запросом) —
     // база вторую запись не приняла, отдаём прежний итог.
     if (saved.duplicate) return repeatOf(saved.event);
+
+    void logEvent('quiz_answer', {
+      player: playerId, variant, q: questionId, level: question.level,
+      correct, points, today: saved.todayPoints,
+    });
 
     return jsonOk({
       correct,

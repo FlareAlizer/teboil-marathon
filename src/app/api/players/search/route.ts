@@ -1,6 +1,7 @@
 import { handle, jsonOk } from '@/lib/api';
 import { listPlayersOfDay, searchPlayers } from '@/lib/queries';
 import { todayLocal } from '@/lib/db';
+import { parseDay } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -18,8 +19,7 @@ export function GET(request: Request) {
     const limitRaw = Number(url.searchParams.get('limit'));
     const limit = Number.isInteger(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 500) : 20;
 
-    const dayParam = url.searchParams.get('day');
-    const day = dayParam && /^\d{4}-\d{2}-\d{2}$/.test(dayParam) ? dayParam : todayLocal();
+    const day = parseDay(url.searchParams.get('day'), todayLocal());
 
     const players = q.length === 0 ? await listPlayersOfDay(day, limit) : await searchPlayers(q, limit);
     return jsonOk({ players });

@@ -94,7 +94,11 @@ export async function getDayStatsCached(day = todayLocal()): Promise<StatsWithDa
   const query = Promise.all([getDayStats(day), listEventDays()])
     .then(([stats, days]) => {
       const value = { ...stats, days };
-      if (startedIn === generation) statsCache.set(day, { at: Date.now(), value });
+      if (startedIn === generation) {
+        // Кеш по дням: перебор дат в адресе не должен раздувать память.
+        if (statsCache.size >= 30) statsCache.clear();
+        statsCache.set(day, { at: Date.now(), value });
+      }
       return value;
     })
     .finally(() => {
@@ -102,6 +106,50 @@ export async function getDayStatsCached(day = todayLocal()): Promise<StatsWithDa
     });
   inflight.set(day, query);
   return query;
+}
+
+export interface DayEventRow {
+  playerId: number;
+  nickname: string;
+  activity: Activity;
+  points: number;
+  rawResult: string | null;
+  createdAt: string;
+  createdBy: string;
+}
+
+/**
+ * Все начисления дня одним запросом, по порядку — для выгрузки в Excel.
+ * Раньше выгрузка брала первую тысячу участников лидерборда и по два
+ * запроса на каждого: при 10 000 участников девять тысяч в файл не попадали.
+ */
+export async function getDayEvents(day: string): Promise<DayEventRow[]> {
+  const rows = await sql<{
+    player_id: number;
+    nickname: string;
+    activity: string;
+    points: number;
+    raw_result: string | null;
+    created_at: string;
+    created_by: string;
+  }>(
+    `SELECT se.player_id, p.nickname, se.activity, se.points, se.raw_result,
+            to_char(se.created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at, se.created_by
+       FROM score_events se
+       JOIN players p ON p.id = se.player_id
+      WHERE se.event_day = $1
+      ORDER BY se.created_at ASC, se.id ASC`,
+    [day],
+  );
+  return rows.map((r) => ({
+    playerId: r.player_id,
+    nickname: r.nickname,
+    activity: r.activity as Activity,
+    points: Number(r.points),
+    rawResult: r.raw_result,
+    createdAt: r.created_at,
+    createdBy: r.created_by,
+  }));
 }
 
 /** Дни, когда на стенде кто-то был, новые сверху — для выбора дня в статистике. */

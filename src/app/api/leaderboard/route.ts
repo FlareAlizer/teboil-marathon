@@ -1,6 +1,7 @@
 import { handle, jsonOk } from '@/lib/api';
 import { todayLocal } from '@/lib/db';
-import { getLeaderboard } from '@/lib/queries';
+import { getLeaderboard } from '@/lib/leaderboard';
+import { parseDay } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,7 +16,7 @@ export function GET(request: Request) {
     const url = new URL(request.url);
     const raw = Number(url.searchParams.get('limit'));
     const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 100) : 10;
-    const day = url.searchParams.get('day') ?? todayLocal();
+    const day = parseDay(url.searchParams.get('day'), todayLocal());
 
     return jsonOk({
       day,

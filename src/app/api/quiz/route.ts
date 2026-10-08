@@ -1,7 +1,8 @@
 import { handle, jsonError, jsonOk } from '@/lib/api';
 import { getPublicQuiz, isQuizVariant, quizActivity } from '@/lib/quiz';
 import { SCORING } from '@/lib/scoring';
-import { getActivityEventsToday } from '@/lib/queries';
+import { getAnsweredQuestionIds } from '@/lib/queries';
+import { logEvent } from '@/lib/log';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,10 +13,11 @@ export const dynamic = 'force-dynamic';
  *          rules: { levelPoints, allLevelsBonus, betFromLevel, betMultiplier },
  *          answeredIds: string[] }
  *
- * `answeredIds` — вопросы, на которые участник уже отвечал сегодня. Нужны,
- * чтобы при повторном заходе квиз начинался с других вопросов: за повторный
- * ответ сервер всё равно не начислит баллы (см. уникальный индекс в db.ts),
- * и показывать такой вопрос значило бы обманывать участника.
+ * `answeredIds` — вопросы, на которые участник уже отвечал (в любой день).
+ * Нужны, чтобы при повторном заходе квиз начинался с других вопросов: за
+ * повторный ответ сервер не начислит баллы и назавтра (уникальный индекс в
+ * db.ts не знает дня) и вернёт прежний итог, а показывать такой вопрос
+ * значило бы обманывать участника.
  *
  * `playerId` необязателен: без него отдаётся тот же квиз с пустым списком.
  */
@@ -33,30 +35,26 @@ export function GET(request: Request) {
       );
     }
 
-    return jsonOk({
-      ...quiz,
-      rules: SCORING.quiz,
-      answeredIds: await answeredToday(url.searchParams.get('playerId'), variant),
+    const answeredIds = await answeredBefore(url.searchParams.get('playerId'), variant);
+    void logEvent('quiz_load', {
+      variant,
+      player: Number(url.searchParams.get('playerId')) || undefined,
+      answered: answeredIds.length,
     });
+
+    return jsonOk({ ...quiz, rules: SCORING.quiz, answeredIds });
   });
 }
 
 /**
- * Id вопросов, отвеченных участником сегодня. Кривой или чужой `playerId`
+ * Id вопросов, на которые участник уже отвечал. Кривой или чужой `playerId`
  * не ошибка: квиз должен открыться в любом случае, просто без истории.
  */
-async function answeredToday(
+async function answeredBefore(
   rawPlayerId: string | null,
   variant: 'v1' | 'v2',
 ): Promise<string[]> {
   const playerId = Number(rawPlayerId);
   if (!Number.isInteger(playerId) || playerId <= 0) return [];
-
-  const events = await getActivityEventsToday(playerId, quizActivity(variant));
-  const ids = events
-    .filter((event) => event.meta?.kind === 'answer')
-    .map((event) => event.meta?.questionId)
-    .filter((id): id is string => typeof id === 'string');
-
-  return [...new Set(ids)];
+  return getAnsweredQuestionIds(playerId, quizActivity(variant));
 }

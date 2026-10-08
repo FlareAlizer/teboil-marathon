@@ -8,6 +8,7 @@ import { pointsLabel } from './format';
 import { rankByNickname } from './search-match';
 import { displayName } from '@/lib/validation';
 import { useDebouncedValue } from './use-debounced';
+import { trace } from '@/lib/client-trace';
 import { cachedPlayers, rememberPlayers } from './players-cache';
 
 /** Сколько подсказок показывать: больше на экране телефона не помещается. */
@@ -75,6 +76,7 @@ export function PlayerSearch({
         const local = cachedPlayers().filter((p) => p.nickname.toLowerCase().includes(needle));
         setPlayers(local);
         setOffline(true);
+        trace('search_offline', { q: typed.length });
         setError(local.length > 0 ? null : errorText(e));
         setActive(0);
       })

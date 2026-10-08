@@ -1,10 +1,10 @@
 import { nicknameKey, sql, todayLocal, tx } from './db';
 import { invalidateRatings } from './ratings';
 import { invalidateStats } from './stats';
+import { invalidateLeaderboard } from './leaderboard';
 import {
   type Activity,
   type CreatedBy,
-  type LeaderboardRow,
   type Player,
   type PlayerSummary,
   type ScoreEvent,
@@ -56,6 +56,7 @@ interface EventRow {
   meta: Record<string, unknown> | null;
   created_at: Date | string;
   created_by: string;
+  event_day: Date | string;
 }
 
 function mapEvent(row: EventRow): ScoreEvent {
@@ -69,6 +70,7 @@ function mapEvent(row: EventRow): ScoreEvent {
     meta: row.meta ?? null,
     createdAt: asStamp(row.created_at),
     createdBy: row.created_by as CreatedBy,
+    eventDay: asDay(row.event_day),
   };
 }
 
@@ -271,6 +273,12 @@ export interface AddScoreInput {
   rawResult?: string | null;
   meta?: Record<string, unknown> | null;
   createdBy?: CreatedBy;
+  /**
+   * День, к которому относится запись. По умолчанию сегодня. Запись станции,
+   * внесённая без связи в 23:58 и ушедшая на сервер в 00:05, должна попасть
+   * в рейтинг и выгрузку того дня, когда человек выступал (см. /api/score).
+   */
+  day?: string;
 }
 
 export interface AddScoreResult {
@@ -289,8 +297,9 @@ export interface AddScoreResult {
  * `duplicate`. Это надёжнее проверки «уже отвечал?» в коде — она при
  * нескольких рабочих процессах гонку проигрывает.
  */
-export async function addScoreEvent(input: AddScoreInput): Promise<AddScoreResult> {
-  const day = todayLocal();
+export async function addScoreEvent(input: AddScoreInput, attempt = 1): Promise<AddScoreResult> {
+  const today = todayLocal();
+  const day = input.day ?? today;
 
   const inserted = await tx(async (client) => {
     const result = await client.query<EventRow>(
@@ -338,10 +347,17 @@ export async function addScoreEvent(input: AddScoreInput): Promise<AddScoreResul
               ORDER BY id LIMIT 1`,
             [input.playerId, input.activity, String(input.meta?.questionId ?? '')],
           );
+    if (!existing[0]) {
+      // Запись, с которой столкнулась вставка, успели отменить между двумя
+      // запросами. Тогда место свободно — пробуем вставить ещё раз (один раз,
+      // без зацикливания), а не падаем с 500-й.
+      if (attempt < 2) return addScoreEvent(input, attempt + 1);
+      throw new Error('Начисление столкнулось с уже отменённой записью');
+    }
     return {
       event: mapEvent(existing[0]),
       totalPoints: await getTotalPoints(input.playerId),
-      todayPoints: await getTotalPoints(input.playerId, day),
+      todayPoints: await getTotalPoints(input.playerId, today),
       duplicate: true,
     };
   }
@@ -349,7 +365,7 @@ export async function addScoreEvent(input: AddScoreInput): Promise<AddScoreResul
   return {
     event: mapEvent(inserted),
     totalPoints: await getTotalPoints(input.playerId),
-    todayPoints: await getTotalPoints(input.playerId, day),
+    todayPoints: await getTotalPoints(input.playerId, today),
   };
 }
 
@@ -424,22 +440,25 @@ export async function getActivityEventsToday(
   return rows.map(mapEvent);
 }
 
-/* ------------------------------ Кеш лидерборда ---------------------------- */
-
 /**
- * Лидерборд — агрегат по всем начислениям дня и самый частый запрос:
- * телевизор опрашивает его каждые 10 секунд, плюс он открывается на экране
- * станций у каждого участника.
- *
- * Держим его в памяти процесса пару секунд; когда сбрасываем раньше — см.
- * invalidateBoardCache ниже.
- *
- * При нескольких рабочих процессах сброс локален: чужая запись становится
- * видна в пределах этих двух секунд. Для экрана, который и так обновляется
- * раз в 10 секунд, это незаметно.
+ * Вопросы, на которые участник уже отвечал — за ВСЕ дни. Уникальный индекс
+ * на ответ (db.ts) не знает дня: второй раз за тот же вопрос баллы не дадут
+ * и назавтра, поэтому и показывать его участнику нельзя.
  */
-const boardCache = new Map<string, { at: number; rows: LeaderboardRow[] }>();
-const BOARD_TTL_MS = 2000;
+export async function getAnsweredQuestionIds(
+  playerId: number,
+  activity: Activity,
+): Promise<string[]> {
+  const rows = await sql<{ id: string }>(
+    `SELECT DISTINCT meta->>'questionId' AS id FROM score_events
+      WHERE player_id = $1 AND activity = $2
+        AND meta->>'kind' = 'answer' AND meta->>'questionId' IS NOT NULL`,
+    [playerId, activity],
+  );
+  return rows.map((r) => r.id);
+}
+
+/* ------------------------------ Сброс кешей ------------------------------ */
 
 /**
  * Ответы квиза кеш НЕ сбрасывают. Их сотни в минуту, и сброс на каждый ответ
@@ -452,78 +471,7 @@ const BOARD_TTL_MS = 2000;
  */
 function invalidateBoardCache(activity?: Activity): void {
   if (activity?.startsWith('quiz_')) return;
-  boardCache.clear();
+  invalidateLeaderboard();
   invalidateStats();
   invalidateRatings();
-}
-
-/** Топ за сегодня: по сумме баллов, при равенстве — кто раньше начал. */
-export async function getLeaderboard(
-  limit = 10,
-  day = todayLocal(),
-): Promise<LeaderboardRow[]> {
-  const hit = boardCache.get(day);
-  if (hit && Date.now() - hit.at < BOARD_TTL_MS && hit.rows.length >= limit) {
-    return hit.rows.slice(0, limit);
-  }
-
-  const rows = await sql<{
-    id: number;
-    nickname: string;
-    points: string;
-    first_at: Date | string;
-  }>(
-    `SELECT p.id,
-            p.nickname,
-            SUM(se.points) AS points,
-            MIN(se.created_at) AS first_at
-       FROM score_events se
-       JOIN players p ON p.id = se.player_id
-      WHERE se.event_day = $1
-      GROUP BY p.id, p.nickname
-      ORDER BY points DESC, first_at ASC, p.id ASC
-      LIMIT $2`,
-    [day, Math.max(limit, 100)],
-  );
-
-  const board = rows.map((r, i) => ({
-    rank: i + 1,
-    id: r.id,
-    nickname: r.nickname,
-    points: Number(r.points),
-    firstEventAt: asStamp(r.first_at),
-  }));
-
-  boardCache.set(day, { at: Date.now(), rows: board });
-  return board.slice(0, limit);
-}
-
-/**
- * Место участника. Считаем одним запросом, сколько человек стоит выше:
- * строить ради этого весь лидерборд слишком дорого, а экран станций
- * открывает каждый участник. Порядок тот же, что в лидерборде.
- */
-export async function getPlayerRank(
-  playerId: number,
-  day = todayLocal(),
-): Promise<number | null> {
-  const rows = await sql<{ rank: string; found: string }>(
-    `WITH totals AS (
-       SELECT player_id, SUM(points) AS pts, MIN(created_at) AS first_at
-         FROM score_events
-        WHERE event_day = $2
-        GROUP BY player_id
-     ),
-     me AS (SELECT pts, first_at FROM totals WHERE player_id = $1)
-     SELECT (SELECT COUNT(*) FROM totals t, me
-              WHERE t.pts > me.pts
-                 OR (t.pts = me.pts AND t.first_at < me.first_at)
-                 OR (t.pts = me.pts AND t.first_at = me.first_at
-                     AND t.player_id < $1)) + 1 AS rank,
-            (SELECT COUNT(*) FROM me) AS found`,
-    [playerId, day],
-  );
-
-  const row = rows[0];
-  return row && Number(row.found) > 0 ? Number(row.rank) : null;
 }

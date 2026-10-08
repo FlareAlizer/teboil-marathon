@@ -49,6 +49,10 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (request.mode === 'navigate') {
+    // Страница сама просит свежую копию (после ошибки загрузки скрипта —
+    // см. src/lib/chunk-recovery.ts): только сеть, без подмены из памяти.
+    // Иначе на медленной сети старая страница отдавалась бы снова и снова.
+    if (url.searchParams.has('__fresh')) return;
     event.respondWith(pageNetworkFirst(request, url.pathname));
   }
 });

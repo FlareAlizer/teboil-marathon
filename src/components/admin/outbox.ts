@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import type { SportActivity } from '@/lib/types';
 import { AdminApiError, AdminUnauthorizedError } from './admin-api';
 import { addScore } from './endpoints';
+import { trace } from '@/lib/client-trace';
 
 /**
  * Очередь результатов станций, которые не удалось отправить.
@@ -67,8 +68,24 @@ export function enqueue(entry: PendingEntry): void {
   write([...read(), entry]);
 }
 
+/** Сколько записей ждёт отправки — для отметки при открытии панели. */
+export function pendingCount(): number {
+  return read().length;
+}
+
 export function dismiss(clientId: string): void {
   write(read().filter((e) => e.clientId !== clientId));
+}
+
+/**
+ * Сбой временный — связи нет, сервер перезапускается (502/503/504 от nginx),
+ * база не дала соединение (500), перегрузка (429) или истёк срок (408).
+ * Такую запись нельзя помечать «не принято»: сама она уже не ушла бы, а
+ * волонтёр убрал бы её кнопкой — и результат был бы потерян. Повторять
+ * безопасно: дубль не даст метка `clientId`.
+ */
+export function isTransientStatus(status: number): boolean {
+  return status === 0 || status === 408 || status === 429 || status >= 500;
 }
 
 let flushing = false;
@@ -93,11 +110,28 @@ export async function flush(): Promise<void> {
           rawResult: entry.rawResult,
           meta: entry.meta,
           clientId: entry.clientId,
+          // Сколько запись пролежала на устройстве. Считается по часам этого
+          // же устройства, поэтому неверное время на планшете не мешает:
+          // сервер вычтет задержку из своих часов и отнесёт запись к тому
+          // дню, когда человек выступал.
+          queuedMs: Date.now() - entry.at,
         });
         dismiss(entry.clientId);
+        trace('outbox_sent', { cid: entry.clientId, act: entry.activity, waitedS: Math.round((Date.now() - entry.at) / 1000) });
       } catch (e) {
-        if (e instanceof AdminUnauthorizedError) return;
-        if (e instanceof AdminApiError && e.status !== 0) {
+        if (e instanceof AdminUnauthorizedError) {
+          trace('outbox_unauthorized', { left: read().length });
+          return;
+        }
+        if (e instanceof AdminApiError && isTransientStatus(e.status)) {
+          // Сети нет — дальше пробовать бессмысленно. Сервер ответил сбоем —
+          // эта запись подождёт, но остальные очередь не держит.
+          if (e.status === 0) return;
+          trace('outbox_retry_later', { cid: entry.clientId, status: e.status });
+          continue;
+        }
+        if (e instanceof AdminApiError) {
+          trace('outbox_rejected', { cid: entry.clientId, status: e.status, error: e.message });
           write(read().map((x) => (x.clientId === entry.clientId ? { ...x, error: e.message } : x)));
           continue;
         }

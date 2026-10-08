@@ -7,7 +7,8 @@ import { obstacleFinalTime, suggestPoints } from '@/lib/scoring';
 import { displayName } from '@/lib/validation';
 import { HOUR, clearState, loadState, saveState } from '@/lib/persist';
 import { AdminApiError, errorText } from '../admin-api';
-import { enqueue, newClientId } from '../outbox';
+import { trace } from '@/lib/client-trace';
+import { enqueue, isTransientStatus, newClientId } from '../outbox';
 import { refreshPlayersCache } from '../players-cache';
 import { addScore, deleteScore, getPlayerRatings, getStation } from '../endpoints';
 import { AddPlayer } from '../AddPlayer';
@@ -149,6 +150,8 @@ export function StationScreen({
         clientId,
       });
 
+      trace('score_saved', { station, cid: clientId, player: player.id, raw });
+
       let place: string | null = null;
       try {
         const mine = (await getPlayerRatings(player.id))[station];
@@ -170,7 +173,11 @@ export function StationScreen({
     } catch (e) {
       // Нет связи — не держим человека и не теряем результат: запись ложится
       // в очередь на устройстве и уйдёт на сервер сама.
-      if (e instanceof AdminApiError && e.status === 0) {
+      // Сервер ответил сбоем (502 при перезапуске, 504) — запись могла и
+      // сохраниться. Повтор с новой меткой создал бы дубль, а с этой же —
+      // нет, поэтому такие записи тоже уходят в очередь.
+      if (e instanceof AdminApiError && isTransientStatus(e.status)) {
+        trace('score_queued', { station, cid: clientId, player: player.id, status: e.status });
         enqueue({
           clientId,
           playerId: player.id,
@@ -184,7 +191,10 @@ export function StationScreen({
         });
         setDone({
           text: `${displayName(player.nickname)}: ${result}`,
-          place: 'Связи нет — запись сохранена на устройстве и уйдёт сама',
+          place:
+            e.status === 0
+              ? 'Связи нет — запись сохранена на устройстве и уйдёт сама'
+              : 'Сервер не ответил — запись сохранена на устройстве и уйдёт сама',
         });
         setPlayer(null);
         resetInput();
@@ -199,6 +209,7 @@ export function StationScreen({
   async function undo(entry: StationEntry) {
     try {
       await deleteScore(entry.eventId);
+      trace('score_undo', { station, event: entry.eventId, player: entry.playerId });
       setDone(null);
       await reload();
     } catch (e) {

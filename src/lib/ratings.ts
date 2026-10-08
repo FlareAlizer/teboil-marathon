@@ -32,6 +32,8 @@ const FULL_BOARD = 50000;
 const TTL_MS = 3000;
 
 const cache = new Map<string, { at: number; rows: RatingRow[] }>();
+/** Четыре рейтинга × десяток дней с запасом. */
+const CACHE_KEYS_MAX = 40;
 /**
  * Пересчёт, который уже идёт. Сотня одновременных запросов после истечения
  * кеша ждёт один и тот же запрос к базе, а не запускает сотню своих.
@@ -128,7 +130,11 @@ async function fullBoard(id: RatingId, day: string): Promise<RatingRow[]> {
   const startedIn = generation;
   const query = queryBoard(id, day)
     .then((rows) => {
-      if (startedIn === generation) cache.set(key, { at: Date.now(), rows });
+      if (startedIn === generation) {
+        // Кеш по дням: перебор дат в адресе не должен раздувать память.
+        if (cache.size >= CACHE_KEYS_MAX) cache.clear();
+        cache.set(key, { at: Date.now(), rows });
+      }
       return rows;
     })
     .finally(() => {

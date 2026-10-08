@@ -6,7 +6,7 @@ import {
 } from '@/lib/queries';
 import { todayLocal } from '@/lib/db';
 import { getPlayerRatings } from '@/lib/ratings';
-import { parseId } from '@/lib/validation';
+import { parseDay, parseId } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,8 +26,7 @@ export function GET(request: Request, ctx: { params: Promise<{ id: string }> }) 
 
     // ?day= — за какой день считать баллы дня и места в рейтингах (по умолчанию сегодня).
     const url = new URL(request.url);
-    const dayParam = url.searchParams.get('day');
-    const day = dayParam && /^\d{4}-\d{2}-\d{2}$/.test(dayParam) ? dayParam : todayLocal();
+    const day = parseDay(url.searchParams.get('day'), todayLocal());
 
     const player = await findPlayerById(id);
     if (!player) return jsonError('Участник не найден', 404);

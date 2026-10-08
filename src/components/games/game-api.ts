@@ -10,6 +10,9 @@
 
 import type { ApiResponse, QuizVariant } from '@/lib/types';
 import { HOUR, loadState, saveState } from '@/lib/persist';
+import { deviceId, trace } from '@/lib/client-trace';
+
+export { trace } from '@/lib/client-trace';
 
 const PLAYER_KEY = 'teboil.player';
 
@@ -64,11 +67,19 @@ async function fetchWithTimeout(
 ): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // Метка устройства: по ней события сервера склеиваются с отметками телефона.
+  const headers = new Headers(init?.headers);
+  headers.set('X-Device', deviceId());
   try {
-    return await fetch(url, { cache: 'no-store', ...init, signal: controller.signal });
+    return await fetch(url, { cache: 'no-store', ...init, headers, signal: controller.signal });
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Адрес без параметров — для отметок: что именно не ответило. */
+function pathOf(url: string): string {
+  return url.split('?')[0];
 }
 
 async function request<T>(
@@ -83,17 +94,25 @@ async function request<T>(
   // отдельные запросы. Это безопасно, потому что каждый запрос игры на
   // сервере повторяемый — вход находит того же участника, ответ на вопрос и
   // бонус засчитываются один раз, а на повтор сервер отдаёт прежний итог.
+  const started = Date.now();
   for (let attempt = 1; ; attempt += 1) {
     try {
       response = await fetchWithTimeout(url, init, timeoutMs);
       break;
-    } catch {
+    } catch (e) {
+      const reason = e instanceof Error ? e.name : 'error';
       if (attempt >= attempts) {
+        trace('net_fail', { url: pathOf(url), attempts, reason, ms: Date.now() - started });
         throw new GameApiError('Нет связи с сервером. Проверь интернет и попробуй ещё раз');
       }
+      trace('net_retry', { url: pathOf(url), attempt, reason });
       await new Promise((resolve) => setTimeout(resolve, 700 * attempt));
     }
   }
+
+  const ms = Date.now() - started;
+  // Медленный ответ — первый признак перегрузки или плохой сети на площадке.
+  if (ms > 5000) trace('slow', { url: pathOf(url), ms, status: response.status });
 
   let payload: ApiResponse<T> | null = null;
   try {
@@ -103,9 +122,10 @@ async function request<T>(
   }
 
   if (payload && payload.ok) return payload.data;
-  throw new GameApiError(
-    payload && !payload.ok ? payload.error : 'Не удалось выполнить запрос',
-  );
+  const message = payload && !payload.ok ? payload.error : 'Не удалось выполнить запрос';
+  // Ровно то, что человек увидит на экране, и код ответа.
+  trace('api_fail', { url: pathOf(url), status: response.status, error: message });
+  throw new GameApiError(message);
 }
 
 function post<T>(url: string, body: unknown): Promise<T> {
@@ -129,6 +149,33 @@ export interface LoginResponse extends CurrentPlayer {
 
 export function login(nickname: string): Promise<LoginResponse> {
   return post<LoginResponse>('/api/players', { nickname });
+}
+
+/**
+ * Сверка участника из памяти устройства с сервером при открытии сайта.
+ *
+ * - 'gone' — такого участника на сервере нет (база сброшена, участника
+ *   удалили): без этой проверки каждый ответ получал бы 404 «Участник не
+ *   найден», и выйти можно было бы только кнопкой «Следующий участник»;
+ * - данные — свежие баллы: назавтра в шапке не должно висеть вчерашнее число;
+ * - null — сервер не ответил: играем дальше с тем, что есть, без ошибок.
+ *
+ * Один короткий запрос без повторов: открытие сайта он не задерживает.
+ */
+export async function checkPlayer(
+  id: number,
+): Promise<'gone' | Pick<CurrentPlayer, 'nickname' | 'totalPoints' | 'todayPoints'> | null> {
+  try {
+    const response = await fetchWithTimeout(`/api/players/${id}`, undefined, 6000);
+    if (response.status === 404) return 'gone';
+    if (!response.ok) return null;
+    const payload = (await response.json()) as ApiResponse<CurrentPlayer>;
+    if (!payload.ok) return null;
+    const { nickname, totalPoints, todayPoints } = payload.data;
+    return { nickname, totalPoints, todayPoints };
+  } catch {
+    return null;
+  }
 }
 
 /* ----------------------------- Квиз с рулеткой ----------------------------- */
@@ -170,11 +217,13 @@ export interface QuizData {
   levels: QuizLevelView[];
   rules: QuizRules;
   /**
-   * Вопросы, на которые участник уже отвечал сегодня. Квиз исключает их из
+   * Вопросы, на которые участник уже отвечал (в любой день). Квиз исключает их из
    * выборки: повторный заход должен начинаться с новых вопросов, а за
    * повторный ответ сервер всё равно не начислит баллы.
    */
   answeredIds: string[];
+  /** Вопросы открыты из памяти устройства: сервер не ответил. */
+  fromCache?: boolean;
 }
 
 /** Вопросы на устройстве живут сутки: дольше банк вопросов может поменяться. */
@@ -211,7 +260,7 @@ export async function getQuiz(variant: QuizVariant, playerId?: number): Promise<
     if (!cached) throw error;
     // Какие вопросы уже отвечены, без сервера не узнать — это допишет экран
     // квиза из своей памяти (см. quiz-progress.ts).
-    return { ...cached, answeredIds: [] };
+    return { ...cached, answeredIds: [], fromCache: true };
   }
 }
 
@@ -255,20 +304,3 @@ export function completeQuiz(
 }
 
 
-/* ------------------------------ Отметки шагов ------------------------------ */
-
-/**
- * Отметка шага в журнале сервера (см. /api/trace). Нужна, чтобы по журналу
- * было видно, где участники застревают при входе. Никогда не мешает игре:
- * ошибки сети здесь молча игнорируются, ответа никто не ждёт.
- */
-export function trace(event: string): void {
-  try {
-    void fetch(`/api/trace?e=${encodeURIComponent(event)}`, {
-      cache: 'no-store',
-      keepalive: true,
-    }).catch(() => undefined);
-  } catch {
-    // Отметка — не часть игры: не получилось, и ладно.
-  }
-}

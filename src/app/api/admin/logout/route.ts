@@ -1,5 +1,6 @@
 import { handle, jsonOk } from '@/lib/api';
 import { destroyAdminSession } from '@/lib/auth';
+import { logEvent } from '@/lib/log';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -8,6 +9,7 @@ export const dynamic = 'force-dynamic';
 export function POST() {
   return handle(async () => {
     await destroyAdminSession();
+    void logEvent('admin_logout', {});
     return jsonOk({ authenticated: false });
   });
 }

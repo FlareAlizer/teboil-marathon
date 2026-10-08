@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { HOUR, clearState, loadState, saveState } from '@/lib/persist';
+import { trace } from '@/lib/client-trace';
 import { displayName } from '@/lib/validation';
 import { adminLogout, onUnauthorized } from './admin-api';
-import { dismiss, useOutbox } from './outbox';
+import { dismiss, pendingCount, useOutbox } from './outbox';
 import { checkSession } from './endpoints';
 import { LoginForm } from './LoginForm';
 import { ScoreScreen } from './ScoreScreen';
@@ -65,9 +66,17 @@ export function AdminApp() {
     const remembered = loadState<boolean>(AUTH_KEY, 12 * HOUR) === true;
     if (remembered) setAuth('in');
 
+    let first = true;
     const check = async () => {
+      const started = Date.now();
       const state = await checkSession();
       if (!alive) return;
+      // Первая проверка — отметка «панель открылась»: с каким входом и как
+      // быстро ответил сервер. Повторные проверки без связи не засоряют журнал.
+      if (first) {
+        first = false;
+        trace('admin_start', { remembered, state, ms: Date.now() - started, pending: pendingCount() });
+      }
       if (state === 'in') {
         saveState(AUTH_KEY, true);
         setAuth('in');

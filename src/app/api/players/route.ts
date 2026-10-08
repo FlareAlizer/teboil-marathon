@@ -1,5 +1,6 @@
 import { handle, jsonOk } from '@/lib/api';
 import { loginPlayer } from '@/lib/queries';
+import { logEvent } from '@/lib/log';
 import { normalizeNickname, readJson } from '@/lib/validation';
 
 export const runtime = 'nodejs';
@@ -20,6 +21,12 @@ export function POST(request: Request) {
     const body = await readJson(request);
     const nickname = normalizeNickname(body.nickname);
     const result = await loginPlayer(nickname);
+    void logEvent('player_login', {
+      player: result.player.id,
+      nick: result.player.nickname,
+      created: result.created,
+      today: result.todayPoints,
+    });
 
     return jsonOk({
       id: result.player.id,

@@ -7,12 +7,14 @@ import { Button } from '@/components/ui';
 import { AppHeader } from './stations/AppHeader';
 import { StationsScreen } from './stations/StationsScreen';
 import {
+  checkPlayer,
   clearPlayer,
   loadPlayer,
   savePlayer,
   trace,
   type CurrentPlayer,
 } from './game-api';
+import { setTracePlayer } from '@/lib/client-trace';
 import { HOUR, clearState, loadState, saveState } from '@/lib/persist';
 import { clearProgress } from './quiz-progress';
 import { LoginScreen } from './LoginScreen';
@@ -57,23 +59,61 @@ export function GameApp() {
     if (nav.variant === 'v1' || nav.variant === 'v2') setVariant(nav.variant);
   }
 
+  const [loginNote, setLoginNote] = useState<string | null>(null);
+
   useEffect(() => {
     // Участник берётся из памяти устройства — без сервера. Поэтому
     // перезагрузка страницы или обрыв сети не выбрасывают на экран входа.
     const saved = loadPlayer();
+    setTracePlayer(saved?.id ?? null);
     // Отметка «приложение запустилось»: страницу сервер отдаёт всегда, а вот
     // дошли ли до телефона скрипты, по журналу иначе не понять.
-    trace(saved ? 'start_saved' : 'start_new');
+    trace('app_start', {
+      saved: Boolean(saved),
+      sw: typeof navigator !== 'undefined' && Boolean(navigator.serviceWorker?.controller),
+      w: window.innerWidth,
+      h: window.innerHeight,
+      from: new URLSearchParams(window.location.search).get('from') ?? '',
+    });
     setPlayer(saved);
     if (saved) restoreNav();
     setReady(true);
+
+    // В фоне сверяем участника с сервером — см. checkPlayer.
+    if (saved) {
+      void checkPlayer(saved.id).then((fresh) => {
+        if (fresh === 'gone') {
+          trace('player_gone', { id: saved.id });
+          clearProgress(saved.id);
+          clearState(NAV_KEY);
+          clearPlayer();
+          setTracePlayer(null);
+          setPlayer(null);
+          setScreen('menu');
+          setLoginNote('Не нашли твой профиль на сервере — войди ещё раз под своим юзернеймом.');
+          return;
+        }
+        if (fresh) {
+          setPlayer((p) => {
+            if (!p || p.id !== saved.id) return p;
+            const next = { ...p, ...fresh };
+            savePlayer(next);
+            return next;
+          });
+        }
+      });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- только при первом открытии
   }, []);
 
-  // Запоминаем экран при каждом переходе.
+  // Запоминаем экран при каждом переходе и отмечаем его в журнале: по этим
+  // отметкам видно, докуда человек дошёл и где бросил.
+  const playerId = player?.id ?? null;
   useEffect(() => {
-    if (ready && player) saveState(NAV_KEY, { screen, variant });
-  }, [ready, player, screen, variant]);
+    if (!ready || playerId === null) return;
+    saveState(NAV_KEY, { screen, variant });
+    trace('screen', { to: screen, variant: screen === 'quiz' ? variant : undefined });
+  }, [ready, playerId, screen, variant]);
 
   function updatePoints(totalPoints: number, todayPoints: number) {
     setPlayer((p) => {
@@ -86,9 +126,11 @@ export function GameApp() {
 
   function finish() {
     // Следующий участник начинает с чистого листа: ни чужого экрана, ни чужого места в квизе.
+    trace('player_finish', { today: player?.todayPoints ?? null });
     if (player) clearProgress(player.id);
     clearState(NAV_KEY);
     clearPlayer();
+    setTracePlayer(null);
     setPlayer(null);
     setScreen('menu');
   }
@@ -109,8 +151,11 @@ export function GameApp() {
   if (!player) {
     return (
       <LoginScreen
+        notice={loginNote}
         onLogin={(p) => {
           savePlayer(p);
+          setTracePlayer(p.id);
+          setLoginNote(null);
           setPlayer(p);
           setScreen('menu');
         }}

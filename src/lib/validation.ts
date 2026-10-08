@@ -134,6 +134,24 @@ export function parseOptionalText(
   return value.length ? value : null;
 }
 
+/**
+ * День «ГГГГ-ММ-ДД» из адреса запроса. Нет параметра — `fallback` (обычно
+ * сегодня). Несуществующая дата вроде 2026-13-45 — 400 с понятным текстом:
+ * раньше она доходила до Postgres и возвращалась 500-й с его сообщением.
+ * Диапазон годов ограничен: перебор дат не должен раздувать кеши по дням.
+ */
+export function parseDay(input: string | null, fallback: string): string {
+  if (input === null || input === '') return fallback;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) fail('day: ожидается дата ГГГГ-ММ-ДД');
+  const date = new Date(`${input}T12:00:00Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== input) {
+    fail('day: такой даты нет');
+  }
+  const year = Number(input.slice(0, 4));
+  if (year < 2024 || year > 2100) fail('day: дата вне диапазона');
+  return input;
+}
+
 export function parseBool(input: unknown, fallback = false): boolean {
   if (input === undefined || input === null) return fallback;
   if (typeof input === 'boolean') return input;

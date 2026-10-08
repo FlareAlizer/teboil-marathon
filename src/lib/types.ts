@@ -68,6 +68,12 @@ export interface ScoreEvent {
   meta: Record<string, unknown> | null;
   createdAt: string;
   createdBy: CreatedBy;
+  /**
+   * День, к которому относится запись (рейтинги, выгрузка). Обычно совпадает
+   * с датой createdAt, но запись станции, пролежавшая ночь в очереди
+   * устройства, относится к дню ввода, а не к дню отправки.
+   */
+  eventDay: string;
 }
 
 export interface PlayerSummary {

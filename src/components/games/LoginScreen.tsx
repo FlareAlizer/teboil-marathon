@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { SiteQr } from '@/components/SiteQr';
 import { AppHeader } from './stations/AppHeader';
 import { NicknameField } from './stations/NicknameField';
-import { errorText, login, type CurrentPlayer } from './game-api';
+import { errorText, login, trace, type CurrentPlayer } from './game-api';
 
 /* ---------------------------------- Вход ---------------------------------- */
 
@@ -16,10 +16,17 @@ import { errorText, login, type CurrentPlayer } from './game-api';
  * всё, что нужно для входа, — это наш сайт, поэтому вход одинаково работает
  * на любом телефоне, с VPN и без.
  */
-export function LoginScreen({ onLogin }: { onLogin: (p: CurrentPlayer) => void }) {
+export function LoginScreen({
+  onLogin,
+  notice = null,
+}: {
+  onLogin: (p: CurrentPlayer) => void;
+  /** Почему человек снова на экране входа (например, профиль не найден). */
+  notice?: string | null;
+}) {
   const [nickname, setNickname] = useState('');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(notice);
 
   async function submit() {
     if (busy) return;
@@ -29,13 +36,17 @@ export function LoginScreen({ onLogin }: { onLogin: (p: CurrentPlayer) => void }
     // Молча ничего не делать нельзя: на киоске это выглядит как зависание.
     if (!value) {
       setError('Заполните это поле!');
+      trace('login_empty');
       return;
     }
 
     setBusy(true);
     setError(null);
+    const started = Date.now();
+    trace('login_submit', { len: value.length, at: value.startsWith('@'), link: /t\.me\//i.test(value) });
     try {
       const result = await login(value);
+      trace('login_ok', { id: result.id, created: result.created, ms: Date.now() - started });
       onLogin({
         id: result.id,
         nickname: result.nickname,
@@ -43,6 +54,8 @@ export function LoginScreen({ onLogin }: { onLogin: (p: CurrentPlayer) => void }
         todayPoints: result.todayPoints,
       });
     } catch (e) {
+      // Ровно тот текст, что увидел человек, — по нему видно, на чём спотыкаются.
+      trace('login_fail', { error: errorText(e), ms: Date.now() - started });
       setError(errorText(e));
     } finally {
       setBusy(false);

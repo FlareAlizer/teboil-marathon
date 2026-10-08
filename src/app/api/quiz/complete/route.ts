@@ -1,4 +1,5 @@
 import { handle, jsonError, jsonOk } from '@/lib/api';
+import { logEvent } from '@/lib/log';
 import { isQuizVariant, quizActivity } from '@/lib/quiz';
 import { quizCompletionBonus } from '@/lib/scoring';
 import {
@@ -44,6 +45,7 @@ export function POST(request: Request) {
     const allPassed = [1, 2, 3].every((l) => levelsPassed.includes(l));
 
     if (bonusAlreadyGiven || !allPassed) {
+      void logEvent('quiz_bonus', { player: playerId, variant, awarded: false, already: bonusAlreadyGiven, levels: levelsPassed.join(',') });
       return jsonOk({
         awarded: false,
         bonus: 0,
@@ -55,15 +57,32 @@ export function POST(request: Request) {
     }
 
     const bonus = quizCompletionBonus();
+    // Проверка «бонус уже был» выше проигрывает гонку: телефон повторяет
+    // запрос, не дождавшись ответа за 12 секунд, а первый ещё выполняется.
+    // Метка на участника, квиз и день ложится на уникальный индекс по
+    // clientId — второй бонус база не примет.
     const saved = await addScoreEvent({
       playerId,
       activity,
       points: bonus,
       rawResult: 'all_levels',
-      meta: { kind: 'bonus', variant },
+      meta: { kind: 'bonus', variant, clientId: `quiz-bonus-${activity}-${playerId}-${todayLocal()}` },
       createdBy: 'auto',
     });
 
+    if (saved.duplicate) {
+      void logEvent('quiz_bonus', { player: playerId, variant, awarded: false, already: true, race: true });
+      return jsonOk({
+        awarded: false,
+        bonus: 0,
+        levelsPassed: [1, 2, 3],
+        alreadyAwarded: true,
+        totalPoints: saved.totalPoints,
+        todayPoints: saved.todayPoints,
+      });
+    }
+
+    void logEvent('quiz_bonus', { player: playerId, variant, awarded: true, bonus, today: saved.todayPoints });
     return jsonOk({
       awarded: true,
       bonus,

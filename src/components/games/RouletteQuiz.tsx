@@ -17,6 +17,7 @@ import {
   errorText,
   getQuiz,
   penaltyFor,
+  trace,
   type CurrentPlayer,
   type QuizAnswerResponse,
   type QuizData,
@@ -108,8 +109,11 @@ export function RouletteQuiz({
   /** Вынесено из эффекта, чтобы этим же путём работала кнопка «Попробовать снова». */
   const loadQuiz = useCallback(async () => {
     setError(null);
+    const started = Date.now();
     try {
       const data = await getQuiz(variant, player.id);
+      const questions = data.levels.reduce((n, l) => n + l.questions.length, 0);
+      trace('quiz_loaded', { variant, questions, answered: data.answeredIds?.length ?? 0, fromCache: data.fromCache ?? false, ms: Date.now() - started });
       themeOrder.current = shuffledOrder(
         data.levels.flatMap((l) => l.questions.map((q) => q.theme)),
       );
@@ -137,8 +141,11 @@ export function RouletteQuiz({
       setChosen(saved.result ? saved.chosen : null);
       setResult(saved.result);
       // Вопроса больше нет в банке — к выбору уровня, а не на пустой экран.
-      setPhase(saved.phase === 'question' && !current ? 'levelPick' : saved.phase);
+      const restoredPhase = saved.phase === 'question' && !current ? 'levelPick' : saved.phase;
+      trace('quiz_restored', { variant, phase: restoredPhase, q: saved.questionId, answered: Boolean(saved.result) });
+      setPhase(restoredPhase);
     } catch (e) {
+      trace('quiz_load_fail', { variant, error: errorText(e), ms: Date.now() - started });
       setError(errorText(e));
     }
   }, [variant, player.id]);
@@ -233,11 +240,13 @@ export function RouletteQuiz({
       setResult(null);
       setError(null);
       setPhase('question');
+      trace('topic_start', { variant, level, theme: sector.id, q: picked.id });
     },
-    [available, takeQuestion],
+    [available, takeQuestion, variant, level],
   );
 
   function pickLevel(next: 1 | 2 | 3) {
+    trace('level_pick', { variant, level: next, left: openByLevel[next].length });
     setLevel(next);
     setTheme(null);
     setQuestion(null);
@@ -250,6 +259,7 @@ export function RouletteQuiz({
     if (!question || busy || chosen !== null) return; // защита от двойного тапа
     setBusy(true);
     setChosen(index);
+    const started = Date.now();
     try {
       const res = await answerQuiz({
         playerId: player.id,
@@ -271,7 +281,10 @@ export function RouletteQuiz({
       if (res.totalPoints !== null && res.todayPoints !== null) {
         onPoints(res.totalPoints, res.todayPoints);
       }
+      // Медленный ответ на вопрос — то, что человек чувствует как «зависло».
+      if (Date.now() - started > 3000) trace('answer_slow', { q: question.id, ms: Date.now() - started });
     } catch (e) {
+      trace('answer_fail', { variant, q: question.id, error: errorText(e), ms: Date.now() - started });
       setError(errorText(e));
       setChosen(null);
     } finally {
@@ -304,7 +317,8 @@ export function RouletteQuiz({
         setPoints((p) => p + done.bonus);
         onPoints(done.totalPoints, done.todayPoints);
       }
-    } catch {
+    } catch (e) {
+      trace('quiz_bonus_fail', { variant, error: errorText(e) });
       // Бонус — приятное дополнение, а не условие продолжения игры: если
       // запрос не прошёл, итог рубрики всё равно должен открыться. Сервер
       // выдаст бонус на следующей рубрике, он считается по журналу.

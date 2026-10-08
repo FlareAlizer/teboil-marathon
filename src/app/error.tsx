@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect } from 'react';
-import { trace } from '@/components/games/game-api';
+import { trace } from '@/lib/client-trace';
+import { isStaleChunkError, reloadFresh } from '@/lib/chunk-recovery';
 
 /**
  * Экран на случай сбоя в самом приложении.
@@ -13,7 +14,10 @@ import { trace } from '@/components/games/game-api';
  */
 export default function AppError({ error, reset }: { error: Error; reset: () => void }) {
   useEffect(() => {
-    trace(`js_crash:${String(error?.message ?? error).slice(0, 140)}`);
+    const message = String(error?.message ?? error).slice(0, 200);
+    // Устаревшая страница после выкатки — чинится свежей перезагрузкой.
+    if (isStaleChunkError(message) && reloadFresh(message)) return;
+    trace('js_crash', { error: message, digest: (error as Error & { digest?: string })?.digest ?? '' });
   }, [error]);
 
   return (

@@ -1,5 +1,7 @@
 'use client';
 
+import { deviceId, trace } from '@/lib/client-trace';
+
 /**
  * Клиент админ-API.
  *
@@ -60,8 +62,11 @@ const TIMEOUT_MS = 12_000;
 export async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  // Метка устройства: по ней события сервера склеиваются с отметками планшета.
+  const headers = new Headers(init?.headers);
+  headers.set('X-Device', deviceId());
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    return await fetch(url, { ...init, headers, signal: controller.signal });
   } finally {
     clearTimeout(timer);
   }
@@ -81,6 +86,8 @@ export async function adminFetch<T>(url: string, init?: RequestInit): Promise<T>
   const readOnly = !init?.method || init.method === 'GET';
   const attempts = readOnly ? 3 : 1;
 
+  const started = Date.now();
+  const path = url.split('?')[0];
   for (let attempt = 1; ; attempt += 1) {
     try {
       response = await fetchWithTimeout(url, {
@@ -89,8 +96,15 @@ export async function adminFetch<T>(url: string, init?: RequestInit): Promise<T>
         ...init,
       });
       break;
-    } catch {
+    } catch (e) {
       if (attempt >= attempts) {
+        trace('admin_net_fail', {
+          url: path,
+          method: init?.method ?? 'GET',
+          attempts,
+          reason: e instanceof Error ? e.name : 'error',
+          ms: Date.now() - started,
+        });
         // Стенд может на секунду потерять сеть — это не потеря сессии.
         throw new AdminApiError(
           readOnly
@@ -103,7 +117,11 @@ export async function adminFetch<T>(url: string, init?: RequestInit): Promise<T>
     }
   }
 
+  const ms = Date.now() - started;
+  if (ms > 5000) trace('admin_slow', { url: path, ms, status: response.status });
+
   if (response.status === 401) {
+    trace('admin_session_lost', { url: path });
     notifyUnauthorized();
     throw new AdminUnauthorizedError();
   }
@@ -118,6 +136,7 @@ export async function adminFetch<T>(url: string, init?: RequestInit): Promise<T>
   if (payload && payload.ok) return payload.data;
 
   const message = payload && !payload.ok ? payload.error : messageFor(response.status);
+  trace('admin_api_fail', { url: path, method: init?.method ?? 'GET', status: response.status, error: message });
   throw new AdminApiError(message, response.status);
 }
 
@@ -139,7 +158,7 @@ export async function adminLogin(password: string): Promise<void> {
   let response: Response;
 
   try {
-    response = await fetch('/api/admin/login', {
+    response = await fetchWithTimeout('/api/admin/login', {
       method: 'POST',
       cache: 'no-store',
       credentials: 'same-origin',
@@ -147,11 +166,17 @@ export async function adminLogin(password: string): Promise<void> {
       body: JSON.stringify({ password }),
     });
   } catch {
+    trace('admin_login_net_fail');
     throw new AdminApiError('Нет связи с сервером', 0);
   }
 
   if (response.status === 401) {
+    trace('admin_login_wrong_password');
     throw new AdminApiError('Неверный пароль', 401);
+  }
+  if (response.status === 429) {
+    trace('admin_login_blocked');
+    throw new AdminApiError('Слишком много неверных попыток. Подожди пару минут и попробуй снова', 429);
   }
 
   let payload: ApiResponse<unknown> | null = null;
