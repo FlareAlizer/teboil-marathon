@@ -9,6 +9,7 @@
  */
 
 import type { ApiResponse, QuizVariant } from '@/lib/types';
+import { HOUR, loadState, saveState } from '@/lib/persist';
 
 const PLAYER_KEY = 'teboil.player';
 
@@ -56,9 +57,13 @@ export class GameApiError extends Error {}
 /** Сколько ждём ответа. Без предела «Загружаем вопросы…» на плохой сети висело бы минутами. */
 const TIMEOUT_MS = 12_000;
 
-async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+async function fetchWithTimeout(
+  url: string,
+  init?: RequestInit,
+  timeoutMs = TIMEOUT_MS,
+): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, { cache: 'no-store', ...init, signal: controller.signal });
   } finally {
@@ -66,17 +71,21 @@ async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Respon
   }
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+async function request<T>(
+  url: string,
+  init?: RequestInit,
+  attempts = 3,
+  timeoutMs = TIMEOUT_MS,
+): Promise<T> {
   let response: Response;
 
-  // Чтение (вопросы, рейтинги) повторяем сами: мобильная сеть на площадке
-  // теряет отдельные запросы. Отправку ответа не повторяем — участник просто
-  // нажмёт ещё раз, а сервер не засчитает один вопрос дважды.
-  const attempts = !init?.method || init.method === 'GET' ? 3 : 1;
-
+  // Повторяем сами всё, включая отправку: мобильная сеть на площадке теряет
+  // отдельные запросы. Это безопасно, потому что каждый запрос игры на
+  // сервере повторяемый — вход находит того же участника, ответ на вопрос и
+  // бонус засчитываются один раз, а на повтор сервер отдаёт прежний итог.
   for (let attempt = 1; ; attempt += 1) {
     try {
-      response = await fetchWithTimeout(url, init);
+      response = await fetchWithTimeout(url, init, timeoutMs);
       break;
     } catch {
       if (attempt >= attempts) {
@@ -120,42 +129,6 @@ export interface LoginResponse extends CurrentPlayer {
 
 export function login(nickname: string): Promise<LoginResponse> {
   return post<LoginResponse>('/api/players', { nickname });
-}
-
-/* --------------------------- Вход через Telegram -------------------------- */
-
-/** Вход по данным, которые Telegram передал открытому в нём сайту. */
-export function telegramLogin(initData: string): Promise<LoginResponse> {
-  return post<LoginResponse>('/api/players/telegram', { initData });
-}
-
-/** Куда ведёт кнопка «Войти через Telegram»; null — вход не настроен. */
-export async function getTelegramLoginUrl(): Promise<string | null> {
-  try {
-    const data = await request<{ loginUrl: string | null }>('/api/telegram');
-    return data.loginUrl;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Данные входа, если сайт открыт внутри Telegram.
- *
- * Telegram кладёт их в адрес после «#» (`tgWebAppData=…`). Официальный скрипт
- * Telegram читает их оттуда же, поэтому ради одной строки его не ждём —
- * вход начинается сразу, без лишнего запроса к telegram.org.
- */
-export function readTelegramInitData(): string | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const fromHash = new URLSearchParams(window.location.hash.slice(1)).get('tgWebAppData');
-    if (fromHash) return fromHash;
-    const tg = (window as unknown as { Telegram?: { WebApp?: { initData?: string } } }).Telegram;
-    return tg?.WebApp?.initData || null;
-  } catch {
-    return null;
-  }
 }
 
 /* ----------------------------- Квиз с рулеткой ----------------------------- */
@@ -204,9 +177,42 @@ export interface QuizData {
   answeredIds: string[];
 }
 
-export function getQuiz(variant: QuizVariant, playerId?: number): Promise<QuizData> {
+/** Вопросы на устройстве живут сутки: дольше банк вопросов может поменяться. */
+const QUIZ_CACHE_AGE = 24 * HOUR;
+
+/**
+ * Вопросы квиза. Свежие берём с сервера и сразу кладём копию на устройство;
+ * если сервер не ответил — открываем квиз из этой копии.
+ *
+ * Хранить их на телефоне безопасно: правильных ответов в списке нет, они
+ * приходят с сервера только после ответа участника. Поэтому открыть квиз
+ * без сети можно, а вот проверить ответ — только со связью.
+ *
+ * Когда копия уже есть, сервер ждём недолго и один раз: человеку лучше сразу
+ * увидеть вопросы из памяти, чем полминуты смотреть на «Загружаем…».
+ */
+export async function getQuiz(variant: QuizVariant, playerId?: number): Promise<QuizData> {
+  const key = `teboil.quiz.${variant}`;
+  const cached = loadState<Omit<QuizData, 'answeredIds'>>(key, QUIZ_CACHE_AGE);
   const query = playerId ? `&playerId=${playerId}` : '';
-  return request<QuizData>(`/api/quiz?variant=${variant}${query}`);
+
+  try {
+    const fresh = await request<QuizData>(
+      `/api/quiz?variant=${variant}${query}`,
+      undefined,
+      cached ? 1 : 3,
+      cached ? 4000 : TIMEOUT_MS,
+    );
+    const { answeredIds: _answered, ...shared } = fresh;
+    void _answered;
+    saveState(key, shared);
+    return fresh;
+  } catch (error) {
+    if (!cached) throw error;
+    // Какие вопросы уже отвечены, без сервера не узнать — это допишет экран
+    // квиза из своей памяти (см. quiz-progress.ts).
+    return { ...cached, answeredIds: [] };
+  }
 }
 
 export interface QuizAnswerResponse {

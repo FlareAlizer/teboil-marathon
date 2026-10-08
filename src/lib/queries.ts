@@ -1,10 +1,9 @@
 import { nicknameKey, sql, todayLocal, tx } from './db';
 import { invalidateRatings } from './ratings';
+import { invalidateStats } from './stats';
 import {
-  ACTIVITIES,
   type Activity,
   type CreatedBy,
-  type DayStats,
   type LeaderboardRow,
   type Player,
   type PlayerSummary,
@@ -324,13 +323,21 @@ export async function addScoreEvent(input: AddScoreInput): Promise<AddScoreResul
   invalidateBoardCache();
 
   if (!inserted) {
-    // Вставки не было: сработал уникальный индекс на ответ квиза.
-    const existing = await sql<EventRow>(
-      `SELECT * FROM score_events
-        WHERE player_id = $1 AND activity = $2 AND meta->>'questionId' = $3
-        ORDER BY id LIMIT 1`,
-      [input.playerId, input.activity, String(input.meta?.questionId ?? '')],
-    );
+    // Вставки не было: сработал уникальный индекс — на ответ квиза или на
+    // метку записи со станции (та же запись пришла повторно после обрыва).
+    const clientId = input.meta?.clientId;
+    const existing =
+      typeof clientId === 'string'
+        ? await sql<EventRow>(
+            `SELECT * FROM score_events WHERE meta->>'clientId' = $1 LIMIT 1`,
+            [clientId],
+          )
+        : await sql<EventRow>(
+            `SELECT * FROM score_events
+              WHERE player_id = $1 AND activity = $2 AND meta->>'questionId' = $3
+              ORDER BY id LIMIT 1`,
+            [input.playerId, input.activity, String(input.meta?.questionId ?? '')],
+          );
     return {
       event: mapEvent(existing[0]),
       totalPoints: await getTotalPoints(input.playerId),
@@ -436,6 +443,7 @@ const BOARD_TTL_MS = 2000;
 
 function invalidateBoardCache(): void {
   boardCache.clear();
+  invalidateStats();
   invalidateRatings();
 }
 
@@ -508,70 +516,4 @@ export async function getPlayerRank(
 
   const row = rows[0];
   return row && Number(row.found) > 0 ? Number(row.rank) : null;
-}
-
-/* ------------------------------- Статистика ------------------------------- */
-
-export async function getDayStats(day = todayLocal()): Promise<DayStats> {
-  const [visitors] = await sql<{ c: string }>(
-    'SELECT COUNT(*) AS c FROM visits WHERE event_day = $1',
-    [day],
-  );
-
-  // Три счётчика одним проходом по дню вместо трёх отдельных запросов.
-  const [totals] = await sql<{ quiz: string; sport: string; points: string }>(
-    `SELECT COUNT(DISTINCT player_id) FILTER (WHERE activity LIKE 'quiz$_%' ESCAPE '$') AS quiz,
-            COUNT(DISTINCT player_id) FILTER (WHERE activity LIKE 'sport$_%' ESCAPE '$') AS sport,
-            COALESCE(SUM(points),0) AS points
-       FROM score_events
-      WHERE event_day = $1`,
-    [day],
-  );
-
-  const rows = await sql<{
-    activity: string;
-    events: string;
-    players: string;
-    points: string;
-  }>(
-    `SELECT activity,
-            COUNT(*) AS events,
-            COUNT(DISTINCT player_id) AS players,
-            COALESCE(SUM(points),0) AS points
-       FROM score_events
-      WHERE event_day = $1
-      GROUP BY activity`,
-    [day],
-  );
-
-  const byActivity = Object.fromEntries(
-    ACTIVITIES.map((a) => [a, { events: 0, players: 0, points: 0 }]),
-  ) as DayStats['byActivity'];
-
-  for (const r of rows) {
-    if (r.activity in byActivity) {
-      byActivity[r.activity as Activity] = {
-        events: Number(r.events),
-        players: Number(r.players),
-        points: Number(r.points),
-      };
-    }
-  }
-
-  return {
-    day,
-    totalVisitors: Number(visitors?.c ?? 0),
-    quizPlayers: Number(totals?.quiz ?? 0),
-    sportPlayers: Number(totals?.sport ?? 0),
-    totalPoints: Number(totals?.points ?? 0),
-    byActivity,
-  };
-}
-
-/** Дни, когда на стенде кто-то был, новые сверху — для выбора дня в статистике. */
-export async function listEventDays(): Promise<string[]> {
-  const rows = await sql<{ day: string }>(
-    `SELECT DISTINCT to_char(event_day, 'YYYY-MM-DD') AS day FROM visits ORDER BY day DESC`,
-  );
-  return rows.map((r) => r.day);
 }

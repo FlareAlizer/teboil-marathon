@@ -45,11 +45,11 @@ const postJson = (path, data, extra = {}) =>
 /* ------------------------------ Вход участника ----------------------------- */
 
 async function testLogin() {
-  console.log('\nВХОД УЧАСТНИКА ПО ТЕЛЕГРАМ-ЮЗЕРНЕЙМУ');
+  console.log('\nВХОД УЧАСТНИКА ПО НИКУ');
   const username = `test_fox_${Date.now() % 100000}`;
 
   const first = await postJson('/api/players', { nickname: username });
-  check('вход по юзернейму', first.body?.ok === true, first.body?.error);
+  check('вход по юзернейму из Телеграма', first.body?.ok === true, first.body?.error);
   const id = first.body?.data?.id;
 
   const withAt = await postJson('/api/players', { nickname: `@${username}` });
@@ -57,18 +57,20 @@ async function testLogin() {
     `${id} vs ${withAt.body?.data?.id}`);
 
   const upper = await postJson('/api/players', { nickname: username.toUpperCase() });
-  check('другой регистр — тот же участник (в Телеграме регистр не важен)',
-    upper.body?.data?.id === id, `${id} vs ${upper.body?.data?.id}`);
+  check('другой регистр — тот же участник', upper.body?.data?.id === id,
+    `${id} vs ${upper.body?.data?.id}`);
 
   const spaced = await postJson('/api/players', { nickname: `  @${username}  ` });
   check('пробелы по краям не создают дубль', spaced.body?.data?.id === id,
     `${id} vs ${spaced.body?.data?.id}`);
 
-  // Кириллица и слишком короткие имена на киоске недопустимы: под этим
-  // юзернеймом человеку потом выдают приз.
-  for (const bad of ['Вася', 'кириллица_тут', 'ab', '1startsdigit', 'has space', '', '@']) {
+  const plain = await postJson('/api/players', { nickname: `Петя Солдат ${Date.now() % 100000}` });
+  check('обычный ник «Петя Солдат» принят', plain.body?.ok === true, plain.body?.error);
+
+  // Пустое, из одного знака и со значками — отклоняются с понятной ошибкой.
+  for (const bad of ['Я', '', '@', '   ', 'Бегун 🏃', '<script>', 'x'.repeat(33)]) {
     const res = await postJson('/api/players', { nickname: bad });
-    check(`не юзернейм «${bad.slice(0, 14)}» отклонён с 400`, res.status === 400,
+    check(`неподходящий ник «${bad.slice(0, 14)}» отклонён с 400`, res.status === 400,
       `HTTP ${res.status}`);
   }
 
@@ -76,7 +78,7 @@ async function testLogin() {
   check('пустое тело не роняет сервер', noField.status === 400,
     `HTTP ${noField.status}`);
 
-  const manual = await postJson('/api/players/manual', { nickname: 'Без Юзернейма' });
+  const manual = await postJson('/api/players/manual', { nickname: 'Без Телефона' });
   check('ручное заведение участника требует сессию оператора',
     manual.status === 401, `HTTP ${manual.status}`);
 
@@ -128,9 +130,21 @@ async function testQuiz(playerId) {
   const repeat = await postJson('/api/quiz/answer', {
     playerId, variant: 'v1', questionId: question.id, answerIndex: 0, bet: false,
   });
+  // Повтор возвращает тот же итог, что и первый раз (так телефон, не дождавшийся
+  // ответа из-за обрыва, спокойно переспрашивает), но сумма баллов не растёт.
   check('повторный ответ на тот же вопрос не начисляет баллы снова',
-    repeat.body?.data?.alreadyAnswered === true && repeat.body?.data?.points === 0,
+    repeat.body?.data?.alreadyAnswered === true &&
+    repeat.body?.data?.todayPoints === first.body?.data?.todayPoints &&
+    repeat.body?.data?.points === first.body?.data?.points,
     JSON.stringify(repeat.body?.data));
+
+  const changed = await postJson('/api/quiz/answer', {
+    playerId, variant: 'v1', questionId: question.id, answerIndex: 3, bet: false,
+  });
+  check('другой вариант на отвеченный вопрос не меняет исход',
+    changed.body?.data?.correct === first.body?.data?.correct &&
+    changed.body?.data?.todayPoints === first.body?.data?.todayPoints,
+    JSON.stringify(changed.body?.data));
 
   const ghost = await postJson('/api/quiz/answer', {
     playerId, variant: 'v1', questionId: 'нет-такого', answerIndex: 0, bet: false,
@@ -192,9 +206,9 @@ async function testScoringAndStats(playerId) {
     `${before?.totalPoints} -> ${after?.totalPoints}`);
 
   const manual = await postJson('/api/players/manual', {
-    nickname: `Без юзернейма ${Date.now() % 1000}`,
+    nickname: `Без телефона ${Date.now() % 1000}`,
   }, auth);
-  check('оператор заводит участника без юзернейма', manual.body?.ok === true,
+  check('оператор заводит участника вручную', manual.body?.ok === true,
     manual.body?.error);
 
   const badManual = await postJson('/api/players/manual', { nickname: 'Я' }, auth);

@@ -9,6 +9,7 @@
 
 import { pluralRu } from '@/components/admin/format';
 import { SkewedPlate, skewFor } from '@/components/ui';
+import { SiteQr } from '@/components/SiteQr';
 
 /**
  * Срез логотипа считается от полной высоты плашки, а не от кегля: текст 6vh
@@ -52,7 +53,7 @@ export function LeaderboardFooter({
   stale: boolean;
 }) {
   return (
-    <footer className="flex shrink-0 items-center justify-between gap-[2vw] px-[3vw] py-[2vh]">
+    <footer className="flex shrink-0 items-center justify-between gap-[2vw] px-[3vw] py-[1.5vh]">
       <div className="flex items-baseline gap-[1.5vw]">
         <span className="font-display text-[9vh] font-black leading-none tabular-nums text-teboil-red">
           {visitors ?? 0}
@@ -70,6 +71,14 @@ export function LeaderboardFooter({
       >
         Нет связи
       </span>
+
+      {/* Код крупный: его сканируют с нескольких метров, а для тех, кто
+          стоит у экрана, это главный вход в игру. */}
+      <SiteQr
+        className="gap-[1.5vw]"
+        imageClassName="h-[24vh] w-[24vh]"
+        textClassName="order-first text-right text-[3vh]"
+      />
     </footer>
   );
 }

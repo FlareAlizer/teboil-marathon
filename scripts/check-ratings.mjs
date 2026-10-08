@@ -1,17 +1,12 @@
 /**
- * Проверка рейтингов, станций волонтёров и входа через Telegram.
+ * Проверка рейтингов, станций волонтёров и входа по нику.
  *
- *   node scripts/check-ratings.mjs <адрес> <пароль оператора> <токен бота>
+ *   node scripts/check-ratings.mjs <адрес> <пароль оператора>
  *
- * Токен бота — тот же, что в TELEGRAM_BOT_TOKEN у проверяемого сервера:
- * тест сам подписывает данные входа так, как это делает Telegram.
  * Создаёт тестовых участников — гонять на локальной базе, не на боевой.
  */
-import { createHmac } from 'node:crypto';
-
 const BASE = process.argv[2] ?? 'http://localhost:3000';
 const ADMIN_PASSWORD = process.argv[3];
-const BOT_TOKEN = process.argv[4];
 const RUN = Math.floor(Math.random() * 1e6);
 
 let failed = 0;
@@ -42,24 +37,6 @@ const post = (path, data, extra = {}) =>
 async function player(nickname) {
   const r = await post('/api/players', { nickname });
   return r.body.data.id;
-}
-
-/** Подпись initData так, как это делает Telegram. */
-function initData(user, { token = BOT_TOKEN, authDate, signature, signatureInHash = true } = {}) {
-  const fields = {
-    auth_date: String(authDate ?? Math.floor(Date.now() / 1000)),
-    query_id: 'AAHtest',
-    user: JSON.stringify(user),
-  };
-  if (signature) fields.signature = signature;
-  const signed = Object.entries(fields).filter(([k]) => signatureInHash || k !== 'signature');
-  const check = signed
-    .sort(([a], [b]) => (a < b ? -1 : 1))
-    .map(([k, v]) => `${k}=${v}`)
-    .join('\n');
-  const secret = createHmac('sha256', 'WebAppData').update(token).digest();
-  const hash = createHmac('sha256', secret).update(check).digest('hex');
-  return new URLSearchParams({ ...fields, hash }).toString();
 }
 
 /* ------------------------------------------------------------------------ */
@@ -154,55 +131,32 @@ check('отмена записи', undo.body?.ok === true);
 const after = (await api(`/api/players/${p1}`)).body?.data?.ratings?.keepups;
 check('после отмены лучшим стал прошлый результат (30)', after?.value === 30, after?.value);
 
-if (!BOT_TOKEN) {
-  console.log('\nТокен бота не передан — проверку входа через Telegram пропускаю.');
-} else {
-  console.log('\nВХОД ЧЕРЕЗ TELEGRAM');
-  const cfg = (await api('/api/telegram')).body?.data;
-  check('сервер отдаёт ссылку для кнопки', typeof cfg?.loginUrl === 'string', cfg?.loginUrl);
+console.log('\nВХОД ПО НИКУ');
+const enter = (nickname) => post('/api/players', { nickname });
+const petya = await enter(`Петя Солдат ${RUN}`);
+check('ник с пробелом и кириллицей принят', petya.body?.ok === true, petya.body?.error);
+const petyaAgain = await enter(`  петя   солдат ${RUN} `);
+check('тот же ник в другом регистре и с лишними пробелами — тот же участник',
+  petyaAgain.body?.data?.id === petya.body?.data?.id, `${petyaAgain.body?.data?.id} vs ${petya.body?.data?.id}`);
 
-  const tgId = 700000000 + RUN;
-  const tgLogin = (data) => post('/api/players/telegram', { initData: data });
-
-  const first = await tgLogin(initData({ id: tgId, username: `tg_user_${RUN}`, first_name: 'Тест' }));
-  check('вход по подписанным данным', first.body?.ok === true && first.body.data.nickname === `tg_user_${RUN}`,
-    first.body?.error ?? first.body?.data?.nickname);
-
-  const again = await tgLogin(initData({ id: tgId, username: `renamed_${RUN}`, first_name: 'Тест' }));
-  check('сменил юзернейм — тот же участник, баллы не теряются',
-    again.body?.data?.id === first.body?.data?.id, `${again.body?.data?.id} vs ${first.body?.data?.id}`);
-
-  const forged = initData({ id: tgId + 1, username: `forged_${RUN}`, first_name: 'Х' }, { token: '1:WRONG' });
-  const f = await tgLogin(forged);
-  check('подпись чужим ключом отклонена', f.status === 401, `HTTP ${f.status}`);
-
-  const tampered = initData({ id: tgId, username: `tg_user_${RUN}`, first_name: 'Тест' })
-    .replace(encodeURIComponent(String(tgId)), encodeURIComponent(String(tgId + 5)));
-  const t = await tgLogin(tampered);
-  check('подменённый id отклонён', t.status === 401, `HTTP ${t.status}`);
-
-  const old = await tgLogin(initData({ id: tgId, first_name: 'Тест' }, {
-    authDate: Math.floor(Date.now() / 1000) - 3 * 24 * 3600,
-  }));
-  check('данные трёхдневной давности отклонены', old.status === 401, `HTTP ${old.status}`);
-
-  const noUser = await tgLogin(initData({ id: 900000000 + RUN, first_name: 'Иван 🏃' }));
-  const expected = `Иван ${String((900000000 + RUN) % 10000).padStart(4, '0')}`;
-  check('без юзернейма — «Имя 1234», а не похожий на чужой @ник',
-    noUser.body?.data?.nickname === expected, noUser.body?.data?.nickname);
-
-  const manualId = await player(`merge_me_${RUN}`);
-  const merged = await tgLogin(initData({ id: 800000000 + RUN, username: `merge_me_${RUN}`, first_name: 'М' }));
-  check('раньше входил на планшете по юзернейму — тот же участник', merged.body?.data?.id === manualId,
-    `${merged.body?.data?.id} vs ${manualId}`);
-
-  const sigIn = await tgLogin(initData({ id: 600000000 + RUN, username: `sig_in_${RUN}`, first_name: 'С' },
-    { signature: 'abc', signatureInHash: true }));
-  const sigOut = await tgLogin(initData({ id: 610000000 + RUN, username: `sig_out_${RUN}`, first_name: 'С' },
-    { signature: 'abc', signatureInHash: false }));
-  check('новое поле signature принимается в обоих вариантах подписи',
-    sigIn.body?.ok === true && sigOut.body?.ok === true, `${sigIn.status}, ${sigOut.status}`);
+const fox = await enter(`fox_${RUN}`);
+for (const variant of [`@fox_${RUN}`, `https://t.me/fox_${RUN}`, `t.me/FOX_${RUN}/`]) {
+  const r = await enter(variant);
+  check(`«${variant}» — тот же участник, что fox_${RUN}`, r.body?.data?.id === fox.body?.data?.id,
+    r.body?.error ?? r.body?.data?.nickname);
 }
+for (const [value, why] of [['Я', 'из одной буквы'], ['Бегун 🏃', 'со смайликом'], ['x'.repeat(33), 'длиннее 32'], ['   ', 'пустой']]) {
+  const r = await enter(value);
+  check(`ник ${why} отклонён с понятной ошибкой`, r.status === 400 && typeof r.body?.error === 'string',
+    `HTTP ${r.status} ${r.body?.error ?? ''}`);
+}
+const manual = await post('/api/players/manual', { nickname: `Петя Солдат ${RUN}` }, auth);
+check('волонтёр заводит тот же ник — находится тот же участник', manual.body?.data?.id === petya.body?.data?.id,
+  `${manual.body?.data?.id} vs ${petya.body?.data?.id}`);
+
+// Адрес теперь попадает в /api/players/[id], который принимает только GET.
+const tgGone = await post('/api/players/telegram', { initData: 'x' });
+check('вход через Telegram убран', tgGone.status === 404 || tgGone.status === 405, `HTTP ${tgGone.status}`);
 
 console.log(`\nИТОГ: ${failed === 0 ? 'все проверки пройдены' : `провалено ${failed}`}`);
 process.exit(failed === 0 ? 0 : 1);

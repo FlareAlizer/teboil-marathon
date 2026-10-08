@@ -8,6 +8,7 @@ import { pointsLabel } from './format';
 import { rankByNickname } from './search-match';
 import { displayName } from '@/lib/validation';
 import { useDebouncedValue } from './use-debounced';
+import { cachedPlayers, rememberPlayers } from './players-cache';
 
 /** Сколько подсказок показывать: больше на экране телефона не помещается. */
 const LIMIT = 8;
@@ -20,7 +21,7 @@ export function cleanQuery(value: string): string {
 /**
  * Поиск участника с выпадающими подсказками.
  *
- * Волонтёр начинает вводить юзернейм — под полем сразу выпадает список
+ * Волонтёр начинает вводить ник — под полем сразу выпадает список
  * подходящих участников, остаётся ткнуть в нужного. Участник называет ник
  * голосом в шуме стенда, поэтому:
  *  - «@» в начале игнорируется (в базе ники без него);
@@ -41,6 +42,8 @@ export function PlayerSearch({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
+  /** Сервер не ответил — показываем найденное в памяти устройства. */
+  const [offline, setOffline] = useState(false);
   const [active, setActive] = useState(0);
 
   const debounced = useDebouncedValue(cleanQuery(query), 150);
@@ -58,14 +61,22 @@ export function PlayerSearch({
     searchPlayers(debounced, LIMIT * 2)
       .then((found) => {
         if (id !== requestId.current) return;
+        rememberPlayers(found);
         setPlayers(found);
+        setOffline(false);
         setError(null);
         setActive(0);
       })
       .catch((e: unknown) => {
         if (id !== requestId.current) return;
-        setPlayers([]);
-        setError(errorText(e));
+        // Связи нет — ищем среди тех, кого панель уже видела. Этого хватает,
+        // чтобы не держать человека в очереди до возвращения сети.
+        const needle = debounced.toLowerCase();
+        const local = cachedPlayers().filter((p) => p.nickname.toLowerCase().includes(needle));
+        setPlayers(local);
+        setOffline(true);
+        setError(local.length > 0 ? null : errorText(e));
+        setActive(0);
       })
       .finally(() => {
         if (id === requestId.current) setBusy(false);
@@ -107,8 +118,8 @@ export function PlayerSearch({
             setOpen(false);
           }
         }}
-        placeholder="Начни вводить юзернейм"
-        aria-label="Поиск участника по юзернейму"
+        placeholder="Начни вводить ник"
+        aria-label="Поиск участника по нику"
         role="combobox"
         aria-expanded={showList}
         aria-controls="player-suggestions"
@@ -153,6 +164,11 @@ export function PlayerSearch({
             </p>
           ) : (
             <ul>
+              {offline && (
+                <li className="border-b border-teboil-line bg-teboil-surface px-4 py-2 text-[13px] font-bold text-teboil-muted">
+                  Нет связи — показаны участники из памяти устройства
+                </li>
+              )}
               {shown.map((player, index) => (
                 <li key={player.id} role="option" aria-selected={index === active}>
                   <button

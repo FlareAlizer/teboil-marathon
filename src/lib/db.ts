@@ -78,8 +78,15 @@ CREATE TABLE IF NOT EXISTS visits (
 
 CREATE INDEX IF NOT EXISTS idx_players_nickname ON players (lower(nickname) text_pattern_ops);
 
--- Вход через Telegram: аккаунт узнаётся по id, а не по нику — юзернейм в
--- Telegram можно сменить, id нет. У участников, вошедших по нику, пусто.
+-- Запись со станции несёт метку, выданную устройством волонтёра. Если связь
+-- оборвалась и запись ушла повторно, вторая копия не вставится.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_client_once
+  ON score_events ((meta->>'clientId'))
+  WHERE meta->>'clientId' IS NOT NULL;
+
+-- Осталось от входа через Telegram (его убрали 9 октября): у тех, кто входил
+-- так, здесь id аккаунта. Новые записи колонку не заполняют; удалять её
+-- не стали, чтобы не трогать данные прошедших дней.
 ALTER TABLE players ADD COLUMN IF NOT EXISTS telegram_id bigint;
 
 -- Архив отменённых начислений. «Отменить» в панели не стирает запись

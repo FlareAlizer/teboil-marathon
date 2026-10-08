@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { Montserrat } from 'next/font/google';
 import './globals.css';
 import { ErrorReporter } from '@/components/ErrorReporter';
+import { OfflineCache } from '@/components/OfflineCache';
 
 /**
  * Единственная гарнитура дизайн-бука. Medium 500 / Bold 700 / Black 900.
@@ -38,6 +39,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="ru" className={montserrat.variable}>
       <body className="min-h-dvh bg-teboil-white font-sans text-teboil-black antialiased no-select">
         <ErrorReporter />
+        <OfflineCache />
         {children}
       </body>
     </html>

@@ -99,6 +99,8 @@ export interface AddScoreInput {
   points: number;
   rawResult?: string | null;
   meta?: Record<string, unknown> | null;
+  /** Метка записи с устройства: по ней сервер не примет одну запись дважды. */
+  clientId?: string;
 }
 
 /** Начисление оператором: createdBy всегда 'admin', иначе сервер не спросит сессию. */

@@ -5,7 +5,10 @@ import type { PlayerSummary } from '@/lib/types';
 import { formatRatingValue, type RatingBoard, type StationEntry } from '@/lib/rating-defs';
 import { obstacleFinalTime, suggestPoints } from '@/lib/scoring';
 import { displayName } from '@/lib/validation';
-import { errorText } from '../admin-api';
+import { HOUR, clearState, loadState, saveState } from '@/lib/persist';
+import { AdminApiError, errorText } from '../admin-api';
+import { enqueue, newClientId } from '../outbox';
+import { refreshPlayersCache } from '../players-cache';
 import { addScore, deleteScore, getPlayerRatings, getStation } from '../endpoints';
 import { AddPlayer } from '../AddPlayer';
 import { PlayerSearch } from '../PlayerSearch';
@@ -17,6 +20,15 @@ import { STATIONS, unitFor, type StationId } from './station-config';
 /** Как часто подтягивать записи коллег на той же станции. */
 const REFRESH_MS = 15_000;
 
+/** Несохранённая работа волонтёра на станции — см. черновик ниже. */
+interface Draft {
+  player: PlayerSummary | null;
+  count: string;
+  time: string;
+  goal: boolean | null;
+  startedAt: number | null;
+}
+
 interface Done {
   text: string;
   place: string | null;
@@ -25,7 +37,7 @@ interface Done {
 /**
  * Рабочий экран волонтёра на станции.
  *
- * Порядок как в очереди: участник называет юзернейм → волонтёр находит его →
+ * Порядок как в очереди: участник называет ник → волонтёр находит его →
  * вводит результат → «Записать». После записи экран сразу готов к
  * следующему человеку, а наверху остаётся подтверждение с местом в рейтинге,
  * чтобы его можно было сказать участнику вслух.
@@ -43,10 +55,18 @@ export function StationScreen({
 }) {
   const config = STATIONS[station];
 
-  const [player, setPlayer] = useState<PlayerSummary | null>(null);
-  const [count, setCount] = useState('');
-  const [time, setTime] = useState('');
-  const [goal, setGoal] = useState<boolean | null>(null);
+  // Черновик: кого выбрали и что успели набрать. Если страницу перезагрузят
+  // посреди записи (экран погас, сеть моргнула), волонтёр продолжит с того же
+  // места — вплоть до идущего секундомера. Экран рисуется только в браузере
+  // после входа, поэтому читать память устройства прямо здесь безопасно.
+  const draftKey = `teboil.admin.draft.${station}`;
+  const [draft] = useState(() => loadState<Draft>(draftKey, 12 * HOUR));
+
+  const [player, setPlayer] = useState<PlayerSummary | null>(draft?.player ?? null);
+  const [count, setCount] = useState(draft?.count ?? '');
+  const [time, setTime] = useState(draft?.time ?? '');
+  const [goal, setGoal] = useState<boolean | null>(draft?.goal ?? null);
+  const [startedAt, setStartedAt] = useState<number | null>(draft?.startedAt ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<Done | null>(null);
@@ -71,10 +91,26 @@ export function StationScreen({
     return () => clearInterval(t);
   }, [reload]);
 
+  // Запасной список участников для поиска без сети — обновляем в фоне.
+  useEffect(() => {
+    void refreshPlayersCache();
+    const t = setInterval(() => void refreshPlayersCache(), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    if (!player && count === '' && time === '' && goal === null && startedAt === null) {
+      clearState(draftKey);
+    } else {
+      saveState<Draft>(draftKey, { player, count, time, goal, startedAt });
+    }
+  }, [draftKey, player, count, time, goal, startedAt]);
+
   function resetInput() {
     setCount('');
     setTime('');
     setGoal(null);
+    setStartedAt(null);
   }
 
   /* Сырой результат и предпросмотр баллов — по типу станции. */
@@ -99,16 +135,20 @@ export function StationScreen({
     if (!player || raw === null || points === null || busy) return;
     setBusy(true);
     setError(null);
+    // Метка записи: с ней повторная отправка после обрыва не создаст дубль.
+    const clientId = newClientId();
+    const meta = config.input === 'obstacle' ? { goal } : null;
+    const result = `${formatRatingValue(station, finalValue ?? 0)} ${unitFor(station, finalValue ?? 0)}`;
     try {
       await addScore({
         playerId: player.id,
         activity: config.activity,
         points,
         rawResult: raw,
-        meta: config.input === 'obstacle' ? { goal } : null,
+        meta,
+        clientId,
       });
 
-      const result = `${formatRatingValue(station, finalValue ?? 0)} ${unitFor(station, finalValue ?? 0)}`;
       let place: string | null = null;
       try {
         const mine = (await getPlayerRatings(player.id))[station];
@@ -128,7 +168,29 @@ export function StationScreen({
       resetInput();
       void reload();
     } catch (e) {
-      setError(errorText(e));
+      // Нет связи — не держим человека и не теряем результат: запись ложится
+      // в очередь на устройстве и уйдёт на сервер сама.
+      if (e instanceof AdminApiError && e.status === 0) {
+        enqueue({
+          clientId,
+          playerId: player.id,
+          nickname: player.nickname,
+          activity: config.activity,
+          points,
+          rawResult: raw,
+          meta,
+          label: result,
+          at: Date.now(),
+        });
+        setDone({
+          text: `${displayName(player.nickname)}: ${result}`,
+          place: 'Связи нет — запись сохранена на устройстве и уйдёт сама',
+        });
+        setPlayer(null);
+        resetInput();
+      } else {
+        setError(errorText(e));
+      }
     } finally {
       setBusy(false);
     }
@@ -210,7 +272,14 @@ export function StationScreen({
               max={config.max}
             />
           ) : (
-            <ObstacleInput time={time} onTime={setTime} goal={goal} onGoal={setGoal} />
+            <ObstacleInput
+              time={time}
+              onTime={setTime}
+              goal={goal}
+              onGoal={setGoal}
+              startedAt={startedAt}
+              onStartedAt={setStartedAt}
+            />
           )}
 
           <button

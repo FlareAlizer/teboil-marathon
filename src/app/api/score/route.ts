@@ -45,6 +45,14 @@ export function POST(request: Request) {
       parseMeta(body.meta),
     );
 
+    // Метка записи от устройства волонтёра: по ней повторная отправка после
+    // обрыва связи не создаёт вторую запись. Чужой мусор в метку не пускаем.
+    const clientId =
+      typeof body.clientId === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(body.clientId)
+        ? body.clientId
+        : null;
+    if (clientId) entry.meta = { ...(entry.meta ?? {}), clientId };
+
     if (!await findPlayerById(playerId)) return jsonError('Участник не найден', 404);
 
     const result = await addScoreEvent({

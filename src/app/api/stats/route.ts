@@ -1,6 +1,6 @@
 import { handle, jsonOk } from '@/lib/api';
 import { todayLocal } from '@/lib/db';
-import { getDayStats, listEventDays } from '@/lib/queries';
+import { getDayStatsCached } from '@/lib/stats';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,6 +15,6 @@ export function GET(request: Request) {
     const url = new URL(request.url);
     const dayParam = url.searchParams.get('day');
     const day = dayParam && /^\d{4}-\d{2}-\d{2}$/.test(dayParam) ? dayParam : todayLocal();
-    return jsonOk({ ...(await getDayStats(day)), days: await listEventDays() });
+    return jsonOk(await getDayStatsCached(day));
   });
 }

@@ -53,27 +53,31 @@ export function POST(request: Request) {
 
     const activity = quizActivity(variant);
     const answeredEvents = await getActivityEventsToday(playerId, activity);
-    const alreadyAnswered = answeredEvents.some(
-      (e) => e.meta?.questionId === questionId,
-    );
-
-    const correct = question.correctIndex === answerIndex;
-    const outcome = quizAnswerPoints(question.level, correct, bet);
-
-    if (alreadyAnswered) {
-      return jsonOk({
-        correct,
+    /**
+     * Ответ на уже отвеченный вопрос: возвращаем ТОТ ЖЕ итог, что был засчитан
+     * в первый раз, и ничего не начисляем. Телефон, который из-за обрыва связи
+     * не дождался ответа, просто спрашивает ещё раз и показывает участнику
+     * настоящий результат — а подобрать верный вариант повтором нельзя.
+     */
+    const repeatOf = async (event: { points: number; meta: Record<string, unknown> | null }) =>
+      jsonOk({
+        correct: event.meta?.correct === true,
         correctIndex: question.correctIndex,
         fact: question.fact,
         level: question.level,
-        points: 0,
-        betApplied: outcome.betApplied,
-        prizesLost: outcome.prizesLost,
+        points: event.points,
+        betApplied: false,
+        prizesLost: false,
         alreadyAnswered: true,
-        totalPoints: null,
-        todayPoints: null,
+        totalPoints: await getTotalPoints(playerId),
+        todayPoints: await getTotalPoints(playerId, todayLocal()),
       });
-    }
+
+    const previous = answeredEvents.find((e) => e.meta?.questionId === questionId);
+    if (previous) return repeatOf(previous);
+
+    const correct = question.correctIndex === answerIndex;
+    const outcome = quizAnswerPoints(question.level, correct, bet);
 
     const points = await capPenalty(playerId, outcome.points);
 
@@ -100,6 +104,10 @@ export function POST(request: Request) {
       },
       createdBy: 'auto',
     });
+
+    // Вопрос уже был отвечен (в другой день или параллельным запросом) —
+    // база вторую запись не приняла, отдаём прежний итог.
+    if (saved.duplicate) return repeatOf(saved.event);
 
     return jsonOk({
       correct,

@@ -34,19 +34,28 @@ export function ObstacleInput({
   onTime,
   goal,
   onGoal,
+  startedAt,
+  onStartedAt,
 }: {
   time: string;
   onTime: (next: string) => void;
   goal: boolean | null;
   onGoal: (next: boolean) => void;
+  /**
+   * Когда нажали «Старт» — по часам устройства (Date.now), а не по таймеру
+   * страницы. Хранит это значение родитель: так идущий забег переживает
+   * перезагрузку страницы, и секундомер продолжает с верного места.
+   */
+  startedAt: number | null;
+  onStartedAt: (next: number | null) => void;
 }) {
-  const [startedAt, setStartedAt] = useState<number | null>(null);
-  const [tick, setTick] = useState(0);
+  const [tick, setTick] = useState(() => Date.now());
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (startedAt === null) return;
-    timer.current = setInterval(() => setTick(performance.now()), 100);
+    setTick(Date.now());
+    timer.current = setInterval(() => setTick(Date.now()), 100);
     return () => {
       if (timer.current) clearInterval(timer.current);
     };
@@ -57,14 +66,15 @@ export function ObstacleInput({
 
   function toggle() {
     if (!running) {
-      const now = performance.now();
+      const now = Date.now();
       setTick(now);
-      setStartedAt(now);
+      onStartedAt(now);
       return;
     }
-    const seconds = Math.round(((performance.now() - startedAt) / 1000) * 10) / 10;
-    setStartedAt(null);
-    onTime(shown(Math.max(0.1, seconds)));
+    const seconds = Math.round(((Date.now() - startedAt) / 1000) * 10) / 10;
+    onStartedAt(null);
+    // Больше 999,9 секунды поле не принимает — значит, секундомер забыли остановить.
+    onTime(shown(Math.min(999.9, Math.max(0.1, seconds))));
   }
 
   const parsed = parseTime(time);
@@ -105,7 +115,7 @@ export function ObstacleInput({
           <button
             type="button"
             onClick={() => {
-              setStartedAt(null);
+              onStartedAt(null);
               onTime('');
             }}
             className="min-h-tap-xl border-2 border-teboil-line px-4 font-display text-kiosk-sm font-black uppercase text-teboil-muted active:bg-teboil-surface"

@@ -10,6 +10,7 @@ import { WheelScreen } from './WheelScreen';
 import { ThemePickScreen } from './ThemePickScreen';
 import { QuestionScreen } from './QuestionScreen';
 import { OutcomeScreen, TopicDoneScreen } from './QuizOutcome';
+import { clearProgress, loadProgress, saveProgress } from './quiz-progress';
 import {
   answerQuiz,
   completeQuiz,
@@ -113,8 +114,30 @@ export function RouletteQuiz({
         data.levels.flatMap((l) => l.questions.map((q) => q.theme)),
       );
       setQuiz(data);
-      setAskedIds(data.answeredIds ?? []);
-      setPhase('intro');
+
+      // Страницу перезагрузили посреди квиза — возвращаем участника туда, где
+      // он остановился: тот же уровень, рубрика и вопрос.
+      const saved = loadProgress(player.id, variant);
+      setAskedIds([...new Set([...(data.answeredIds ?? []), ...(saved?.askedIds ?? [])])]);
+      if (!saved) {
+        setPhase('intro');
+        return;
+      }
+
+      const current = saved.questionId
+        ? data.levels.flatMap((l) => l.questions).find((q) => q.id === saved.questionId) ?? null
+        : null;
+      setLevel(saved.level);
+      setTheme(saved.theme);
+      setTopicTotal(saved.topicTotal);
+      setTopic(saved.topic);
+      setPoints(saved.points);
+      setBonus(saved.bonus);
+      setQuestion(current);
+      setChosen(saved.result ? saved.chosen : null);
+      setResult(saved.result);
+      // Вопроса больше нет в банке — к выбору уровня, а не на пустой экран.
+      setPhase(saved.phase === 'question' && !current ? 'levelPick' : saved.phase);
     } catch (e) {
       setError(errorText(e));
     }
@@ -123,6 +146,32 @@ export function RouletteQuiz({
   useEffect(() => {
     void loadQuiz();
   }, [loadQuiz]);
+
+  // Запоминаем место после каждого шага. Выбранный вариант сохраняем только
+  // вместе с ответом сервера: иначе перезагрузка в момент отправки оставила
+  // бы вопрос с заблокированными кнопками.
+  useEffect(() => {
+    if (!quiz || phase === 'loading') return;
+    saveProgress(player.id, variant, {
+      phase,
+      level,
+      theme,
+      questionId: question?.id ?? null,
+      askedIds,
+      chosen: result ? chosen : null,
+      result,
+      topicTotal,
+      topic,
+      points,
+      bonus,
+    });
+  }, [quiz, phase, level, theme, question, askedIds, chosen, result, topicTotal, topic, points, bonus, player.id, variant]);
+
+  /** Участник сам уходит из квиза — в следующий раз начнёт с заставки. */
+  const leave = useCallback(() => {
+    clearProgress(player.id, variant);
+    onStations();
+  }, [player.id, variant, onStations]);
 
   /** Ещё не отвеченные вопросы — по уровням. */
   const openByLevel = useMemo(() => {
@@ -286,7 +335,7 @@ export function RouletteQuiz({
               <QuizButton onClick={() => void loadQuiz()}>
                 Попробовать снова
               </QuizButton>
-              <QuizButton tone="pale" onClick={onStations}>
+              <QuizButton tone="pale" onClick={leave}>
                 К станциям
               </QuizButton>
             </div>
@@ -302,7 +351,7 @@ export function RouletteQuiz({
       quiz={quiz}
       available={levelCounts}
       onPick={pickLevel}
-      onStations={onStations}
+      onStations={leave}
     />
   );
 
@@ -313,7 +362,7 @@ export function RouletteQuiz({
         quiz={quiz}
         points={score}
         onStart={() => setPhase('levelPick')}
-        onStations={onStations}
+        onStations={leave}
       />
     );
   }
@@ -329,7 +378,7 @@ export function RouletteQuiz({
         themes={sectors}
         onPick={startTopic}
         onBack={() => setPhase('levelPick')}
-        onStations={onStations}
+        onStations={leave}
       />
     );
   }
@@ -346,7 +395,7 @@ export function RouletteQuiz({
         onPick={startTopic}
         onChooseManually={() => setPhase('themes')}
         onBack={() => setPhase('levelPick')}
-        onStations={onStations}
+        onStations={leave}
       />
     );
   }
@@ -373,7 +422,7 @@ export function RouletteQuiz({
         nextLabel={topic.asked < topicTotal ? 'Следующий вопрос' : 'Итог рубрики'}
         onAnswer={(i) => void answer(i)}
         onNext={() => void next()}
-        onStations={onStations}
+        onStations={leave}
       />
     );
   }
@@ -391,7 +440,7 @@ export function RouletteQuiz({
             `Заработано за заход: ${points} баллов`,
             'Попробуй второй квиз или спортивные станции.',
           ]}
-          onStations={onStations}
+          onStations={leave}
         />
       );
     }
@@ -409,7 +458,7 @@ export function RouletteQuiz({
         themesLeft={sectors.length > 0}
         onAnotherTheme={() => setPhase('wheel')}
         onChangeLevel={() => setPhase('levelPick')}
-        onStations={onStations}
+        onStations={leave}
       />
     );
   }
