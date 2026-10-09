@@ -70,6 +70,19 @@ AccuracySec=1s
 [Install]
 WantedBy=timers.target
 UNIT
+# Журнал приложения: все четыре процесса дописывают в один файл, поэтому
+# copytruncate — процессы перезапускать не нужно.
+cat > /etc/logrotate.d/teboil-app <<'ROT'
+/var/log/teboil.log {
+	daily
+	rotate 60
+	compress
+	delaycompress
+	missingok
+	notifempty
+	copytruncate
+}
+ROT
 cat > /etc/logrotate.d/teboil-monitor <<'ROT'
 /var/log/teboil/monitor.log {
 	daily

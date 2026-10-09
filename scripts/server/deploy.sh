@@ -42,4 +42,5 @@ for port in 3001 3002 3003 3004; do
   echo "teboil@$port: работает"
 done
 echo "через nginx: $(curl -s -o /dev/null -w '%{http_code}' --resolve teboil.space:443:127.0.0.1 https://teboil.space/)"
-echo "ошибок в журналах за 5 минут: $(journalctl -u 'teboil@*' --since '-5 min' --no-pager -o cat | grep -c '"lvl":"error"')"
+since_utc=$(date -u -d '-5 min' '+%Y-%m-%dT%H:%M:%S')
+echo "ошибок приложения за 5 минут: $(tail -n 20000 /var/log/teboil.log | awk -v s="$since_utc" '/"lvl":"error"/ { i = index($0, "\"t\":\""); if (substr($0, i + 5, 19) >= s) n++ } END { print n + 0 }')"

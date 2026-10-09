@@ -56,7 +56,11 @@ read -r req e5 e4 slow < <(tail -n 30000 /var/log/nginx/access.log | awk -v m="[
   }
   END { printf "%d %d %d %d\n", n, e5, e4, s }')
 
-# Ошибки приложения за минуту (строки журнала с "lvl":"error").
-app_err=$(journalctl -u 'teboil@*' --since '-1 min' -o cat --no-pager 2>/dev/null | grep -c '"lvl":"error"')
+# Ошибки приложения за минуту. Процессы пишут в /var/log/teboil.log (см.
+# юнит teboil@.service), время событий там — UTC.
+since_utc=$(date -u -d '-1 min' '+%Y-%m-%dT%H:%M:%S')
+app_err=$(tail -n 20000 /var/log/teboil.log 2>/dev/null | awk -v s="\"t\":\"$since_utc" '
+  /"lvl":"error"/ { i = index($0, "\"t\":\""); if (i && substr($0, i, length(s)) >= s) n++ }
+  END { print n + 0 }')
 
 echo "$now load=$load mem_free_mb=$mem disk_used=${disk}% pg_conn=$pg site=${site_code:-000}/${site_ms}ms$workers req_1m=$req 5xx_1m=$e5 4xx_1m=$e4 slow_1m=$slow app_err_1m=$app_err${flags}" >> "$LOG_DIR/monitor.log"

@@ -24,10 +24,17 @@ cd /opt/teboil || exit 1
 
 echo "собираю за $DAY → $OUT"
 
-# 1. Приложение: journald всех четырёх процессов за день.
-journalctl -u 'teboil@*' --since "$DAY 00:00:00" --until "$NEXT 00:00:00" -o cat --no-pager > "$OUT/app-all.log" 2>/dev/null
-grep '^{' "$OUT/app-all.log" > "$OUT/app.jsonl"
-grep -v '^{' "$OUT/app-all.log" > "$OUT/app-other.log"
+# 1. Приложение. Процессы пишут в /var/log/teboil.log (юнит teboil@.service),
+#    время событий — UTC, поэтому день по Москве — это с 21:00 UTC накануне.
+FROM_UTC=$(date -u -d "$DAY 00:00" '+%Y-%m-%dT%H:%M:%S')
+TO_UTC=$(date -u -d "$NEXT 00:00" '+%Y-%m-%dT%H:%M:%S')
+{
+  for f in /var/log/teboil.log.*.gz; do [ -f "$f" ] && zcat "$f"; done
+  [ -f /var/log/teboil.log.1 ] && cat /var/log/teboil.log.1
+  cat /var/log/teboil.log
+} 2>/dev/null > "$OUT/app-all.log"
+awk -v a="$FROM_UTC" -v b="$TO_UTC" '/^\{/ { i = index($0, "\"t\":\""); t = substr($0, i + 5, 19); if (t >= a && t < b) print }' "$OUT/app-all.log" > "$OUT/app.jsonl"
+grep -v '^{' "$OUT/app-all.log" | tail -n 2000 > "$OUT/app-other.log"
 rm -f "$OUT/app-all.log"
 # Перезапуски процессов за день — важно знать, не падали ли они.
 journalctl -u 'teboil@*' --since "$DAY 00:00:00" --until "$NEXT 00:00:00" --no-pager 2>/dev/null \
