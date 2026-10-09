@@ -3,6 +3,7 @@ import { requireAdmin } from '@/lib/auth';
 import { todayLocal } from '@/lib/db';
 import { logEvent } from '@/lib/log';
 import { addScoreEvent, deleteScoreEvent, findPlayerById } from '@/lib/queries';
+import { getPlayerRatings } from '@/lib/ratings';
 import { SCORING } from '@/lib/scoring';
 import {
   parseActivity,
@@ -87,7 +88,15 @@ export function POST(request: Request) {
       dup: result.duplicate ?? false,
     });
 
-    return jsonOk(result, 201);
+    // Места участника отдаём сразу в ответе. Запись только что сбросила кеш
+    // рейтингов ЭТОГО процесса, поэтому здесь они точно свежие. Отдельный
+    // запрос панели мог попасть на другой процесс, где рейтинг ещё старый
+    // (до 3 секунд), — и волонтёр называл бы участнику прежнее место.
+    const ratings = activity.startsWith('sport_')
+      ? await getPlayerRatings(playerId, day ?? todayLocal())
+      : undefined;
+
+    return jsonOk({ ...result, ratings }, 201);
   });
 }
 

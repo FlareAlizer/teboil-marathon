@@ -141,7 +141,7 @@ export function StationScreen({
     const meta = config.input === 'obstacle' ? { goal } : null;
     const result = `${formatRatingValue(station, finalValue ?? 0)} ${unitFor(station, finalValue ?? 0)}`;
     try {
-      await addScore({
+      const saved = await addScore({
         playerId: player.id,
         activity: config.activity,
         points,
@@ -154,7 +154,8 @@ export function StationScreen({
 
       let place: string | null = null;
       try {
-        const mine = (await getPlayerRatings(player.id))[station];
+        // Место приходит вместе с ответом на запись; отдельный запрос — запасной путь.
+        const mine = (saved.ratings ?? (await getPlayerRatings(player.id)))[station];
         if (mine) {
           const best =
             mine.value !== finalValue

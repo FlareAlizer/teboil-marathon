@@ -91,6 +91,8 @@ export interface ScoreResult {
   event: ScoreEvent;
   totalPoints: number;
   todayPoints: number;
+  /** Места участника сразу после записи станции — см. /api/score. */
+  ratings?: Record<RatingId, PlayerRating | null>;
 }
 
 export interface AddScoreInput {

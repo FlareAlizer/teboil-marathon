@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getRatings, getStats } from '@/components/admin/endpoints';
 import {
   RATINGS,
@@ -63,12 +63,18 @@ export default function LeaderboardPage() {
 
 /** Сам экран. Монтируется, когда уже известно, один рейтинг нужен или все. */
 function Screen({ only }: { only: RatingId | null }) {
+  // Последнее известное число участников: если запрос счётчика не прошёл,
+  // показываем его, а рейтинги всё равно обновляем.
+  const visitors = useRef(0);
+
   const load = useCallback(async (): Promise<BoardData> => {
-    const [ratings, stats] = await Promise.all([
+    const [ratings, stats] = await Promise.allSettled([
       getRatings(only ? SINGLE_SIZE : GRID_SIZE, only ?? undefined),
       getStats(),
     ]);
-    return { boards: ratings.boards, visitors: stats.totalVisitors };
+    if (ratings.status === 'rejected') throw ratings.reason;
+    if (stats.status === 'fulfilled') visitors.current = stats.value.totalVisitors;
+    return { boards: ratings.value.boards, visitors: visitors.current };
   }, [only]);
 
   const { data, stale } = usePolled(load, 10_000);
