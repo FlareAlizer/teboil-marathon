@@ -3,6 +3,7 @@ import { getPublicQuiz, isQuizVariant, quizActivity } from '@/lib/quiz';
 import { SCORING } from '@/lib/scoring';
 import { getAnsweredQuestionIds } from '@/lib/queries';
 import { logEvent } from '@/lib/log';
+import { getQuizEpoch } from '@/lib/quiz-reset';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -42,7 +43,9 @@ export function GET(request: Request) {
       answered: answeredIds.length,
     });
 
-    return jsonOk({ ...quiz, rules: SCORING.quiz, answeredIds });
+    // epoch — метка последнего сброса рейтинга квизов (/reset-quiz): по ней
+    // телефон понимает, что его сохранённое место в квизе устарело.
+    return jsonOk({ ...quiz, rules: SCORING.quiz, answeredIds, epoch: await getQuizEpoch() });
   });
 }
 

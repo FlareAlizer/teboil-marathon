@@ -31,6 +31,8 @@ export interface QuizProgress {
   topic: { asked: number; correct: number; earned: number };
   points: number;
   bonus: number;
+  /** Метка сброса рейтинга квизов, при которой сохранено это место. */
+  epoch?: string | null;
 }
 
 const MAX_AGE = 3 * HOUR;
@@ -39,10 +41,24 @@ function key(playerId: number, variant: QuizVariant): string {
   return `teboil.quizprogress.${playerId}.${variant}`;
 }
 
-export function loadProgress(playerId: number, variant: QuizVariant): QuizProgress | null {
+/**
+ * `epoch` — метка последнего сброса рейтинга квизов с сервера. Если с момента
+ * сохранения рейтинг сбросили (новый розыгрыш), место в квизе выбрасывается:
+ * участник начинает заново и снова видит все вопросы. `undefined` — сервер
+ * не ответил, метка неизвестна: тогда верим тому, что сохранено.
+ */
+export function loadProgress(
+  playerId: number,
+  variant: QuizVariant,
+  epoch?: string | null,
+): QuizProgress | null {
   const saved = loadState<QuizProgress>(key(playerId, variant), MAX_AGE);
   // Запись могла остаться от старой версии сайта — проверяем самое нужное.
   if (!saved || !Array.isArray(saved.askedIds) || typeof saved.phase !== 'string') return null;
+  if (epoch !== undefined && (saved.epoch ?? null) !== epoch) {
+    clearState(key(playerId, variant));
+    return null;
+  }
   return saved;
 }
 

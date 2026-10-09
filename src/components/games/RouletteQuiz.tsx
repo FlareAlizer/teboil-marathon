@@ -121,7 +121,7 @@ export function RouletteQuiz({
 
       // Страницу перезагрузили посреди квиза — возвращаем участника туда, где
       // он остановился: тот же уровень, рубрика и вопрос.
-      const saved = loadProgress(player.id, variant);
+      const saved = loadProgress(player.id, variant, data.fromCache ? undefined : data.epoch ?? null);
       setAskedIds([...new Set([...(data.answeredIds ?? []), ...(saved?.askedIds ?? [])])]);
       if (!saved) {
         setPhase('intro');
@@ -160,6 +160,7 @@ export function RouletteQuiz({
   useEffect(() => {
     if (!quiz || phase === 'loading') return;
     saveProgress(player.id, variant, {
+      epoch: quiz.epoch ?? null,
       phase,
       level,
       theme,

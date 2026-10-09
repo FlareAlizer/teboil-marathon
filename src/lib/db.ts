@@ -107,6 +107,18 @@ CREATE TABLE IF NOT EXISTS deleted_events (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_players_telegram
   ON players (telegram_id) WHERE telegram_id IS NOT NULL;
+
+-- Сбросы рейтинга квизов (страница /reset-quiz): розыгрыш проходит несколько
+-- раз в день, и перед каждым рейтинг квизов обнуляют. Сами ответы уходят в
+-- deleted_events, здесь — когда и сколько сбросили. По времени последнего
+-- сброса телефоны понимают, что их сохранённое место в квизе устарело.
+CREATE TABLE IF NOT EXISTS quiz_resets (
+  id        serial PRIMARY KEY,
+  reset_at  timestamptz NOT NULL DEFAULT now(),
+  event_day date NOT NULL,
+  events    integer NOT NULL,
+  players   integer NOT NULL
+);
 `;
 
 /* ------------------------------- Подключение ------------------------------- */
