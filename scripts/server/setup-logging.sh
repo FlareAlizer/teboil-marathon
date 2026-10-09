@@ -74,6 +74,8 @@ UNIT
 # copytruncate — процессы перезапускать не нужно.
 cat > /etc/logrotate.d/teboil-app <<'ROT'
 /var/log/teboil.log {
+	# /var/log доступен на запись группе syslog — без su logrotate файл пропускает.
+	su root syslog
 	daily
 	rotate 60
 	compress

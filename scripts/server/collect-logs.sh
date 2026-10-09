@@ -26,8 +26,10 @@ echo "собираю за $DAY → $OUT"
 
 # 1. Приложение. Процессы пишут в /var/log/teboil.log (юнит teboil@.service),
 #    время событий — UTC, поэтому день по Москве — это с 21:00 UTC накануне.
-FROM_UTC=$(date -u -d "$DAY 00:00" '+%Y-%m-%dT%H:%M:%S')
-TO_UTC=$(date -u -d "$NEXT 00:00" '+%Y-%m-%dT%H:%M:%S')
+# Полночь берём по местному времени сервера и переводим в UTC (date -u -d
+# прочитал бы саму дату как UTC и сдвинул день на три часа).
+FROM_UTC=$(date -u -d "@$(date -d "$DAY 00:00" +%s)" '+%Y-%m-%dT%H:%M:%S')
+TO_UTC=$(date -u -d "@$(date -d "$NEXT 00:00" +%s)" '+%Y-%m-%dT%H:%M:%S')
 {
   for f in /var/log/teboil.log.*.gz; do [ -f "$f" ] && zcat "$f"; done
   [ -f /var/log/teboil.log.1 ] && cat /var/log/teboil.log.1
