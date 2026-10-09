@@ -3,7 +3,7 @@ import { getPublicQuiz, isQuizVariant, quizActivity } from '@/lib/quiz';
 import { SCORING } from '@/lib/scoring';
 import { getAnsweredQuestionIds } from '@/lib/queries';
 import { logEvent } from '@/lib/log';
-import { getQuizEpoch } from '@/lib/quiz-reset';
+import { getQuizEpoch, hasPlayedQuizRound } from '@/lib/quiz-reset';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -45,7 +45,10 @@ export function GET(request: Request) {
 
     // epoch — метка последнего сброса рейтинга квизов (/reset-quiz): по ней
     // телефон понимает, что его сохранённое место в квизе устарело.
-    return jsonOk({ ...quiz, rules: SCORING.quiz, answeredIds, epoch: await getQuizEpoch() });
+    // locked — человек уже отыграл в сегодняшнем розыгрыше: квиз ему не открываем.
+    const pid = Number(url.searchParams.get('playerId'));
+    const locked = Number.isInteger(pid) && pid > 0 ? await hasPlayedQuizRound(pid) : false;
+    return jsonOk({ ...quiz, rules: SCORING.quiz, answeredIds, epoch: await getQuizEpoch(), locked });
   });
 }
 

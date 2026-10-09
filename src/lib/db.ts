@@ -108,6 +108,10 @@ CREATE TABLE IF NOT EXISTS deleted_events (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_players_telegram
   ON players (telegram_id) WHERE telegram_id IS NOT NULL;
 
+-- По архиву ищем, участвовал ли человек в уже сброшенном розыгрыше (на каждый
+-- ответ квиза) — без индекса это был бы просмотр всего архива.
+CREATE INDEX IF NOT EXISTS idx_deleted_player_day ON deleted_events (player_id, event_day);
+
 -- Сбросы рейтинга квизов (страница /reset-quiz): розыгрыш проходит несколько
 -- раз в день, и перед каждым рейтинг квизов обнуляют. Сами ответы уходят в
 -- deleted_events, здесь — когда и сколько сбросили. По времени последнего

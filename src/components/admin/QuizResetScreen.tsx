@@ -10,6 +10,7 @@ interface QuizDayStats {
   events: number;
   players: number;
   lastResetAt: string | null;
+  playedBefore: number;
 }
 
 type View = 'loading' | 'login' | 'ready';
@@ -22,6 +23,9 @@ type View = 'loading' | 'login' | 'ready';
  * Кнопка в два касания: случайное нажатие ничего не сбросит. Доступ — по
  * паролю оператора, иначе рейтинг мог бы обнулить любой, кто узнал ссылку.
  * Станции, число участников дня и прошлые дни не затрагиваются.
+ *
+ * Один человек участвует в розыгрыше один раз в день: кто был в сброшенном
+ * рейтинге, после сброса квиз пройти уже не может (см. lib/quiz-reset.ts).
  */
 export function QuizResetScreen() {
   const [view, setView] = useState<View>('loading');
@@ -105,6 +109,11 @@ export function QuizResetScreen() {
             {stats.players} {pluralRu(stats.players, 'участник', 'участника', 'участников')}
           </span>
           , {stats.events} {pluralRu(stats.events, 'ответ', 'ответа', 'ответов')}
+          {stats.playedBefore > 0 && (
+            <span className="mt-1 block text-kiosk-sm text-teboil-muted">
+              Уже отыграли сегодня и больше не участвуют: {stats.playedBefore}
+            </span>
+          )}
         </p>
       )}
 
@@ -132,7 +141,8 @@ export function QuizResetScreen() {
 
       <p className="max-w-md text-kiosk-sm font-medium leading-snug text-teboil-muted">
         Сбрасываются только баллы квизов за сегодня. Чеканка, дартс, полоса и число участников
-        дня остаются как есть. Участники смогут пройти квиз заново.
+        дня остаются как есть. Кто был в сброшенном рейтинге, в новом розыгрыше сегодня уже не
+        участвует: квиз для него закрыт до завтра.
         {stats?.lastResetAt && (
           <>
             <br />

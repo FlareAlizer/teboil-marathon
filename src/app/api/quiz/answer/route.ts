@@ -9,6 +9,7 @@ import {
 } from '@/lib/queries';
 import { todayLocal } from '@/lib/db';
 import { logEvent } from '@/lib/log';
+import { QUIZ_ROUND_PLAYED, hasPlayedQuizRound } from '@/lib/quiz-reset';
 import { parseBool, parseId, parseInt_, readJson } from '@/lib/validation';
 
 export const runtime = 'nodejs';
@@ -45,6 +46,8 @@ export function POST(request: Request) {
     const bet = parseBool(body.bet, false);
 
     if (!await findPlayerById(playerId)) return jsonError('Участник не найден', 404);
+    // Один человек — один розыгрыш в день (см. quiz-reset.ts).
+    if (await hasPlayedQuizRound(playerId)) return jsonError(QUIZ_ROUND_PLAYED, 403);
 
     const question = findQuizQuestion(variant, questionId);
     if (!question) return jsonError('Вопрос не найден', 404);

@@ -1,5 +1,6 @@
 import { handle, jsonError, jsonOk } from '@/lib/api';
 import { logEvent } from '@/lib/log';
+import { QUIZ_ROUND_PLAYED, hasPlayedQuizRound } from '@/lib/quiz-reset';
 import { isQuizVariant, quizActivity } from '@/lib/quiz';
 import { quizCompletionBonus } from '@/lib/scoring';
 import {
@@ -29,6 +30,7 @@ export function POST(request: Request) {
     if (!isQuizVariant(variant)) return jsonError('variant: ожидается v1 или v2', 400);
 
     if (!await findPlayerById(playerId)) return jsonError('Участник не найден', 404);
+    if (await hasPlayedQuizRound(playerId)) return jsonError(QUIZ_ROUND_PLAYED, 403);
 
     const activity = quizActivity(variant);
     const events = await getActivityEventsToday(playerId, activity);

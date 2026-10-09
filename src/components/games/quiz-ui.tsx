@@ -240,6 +240,45 @@ export function ScreenTitle({
  * Сообщение об ошибке. Экран квиза не должен молча ломаться: если сервер не
  * ответил, участник обязан это увидеть, иначе он будет тыкать в мёртвую кнопку.
  */
+/**
+ * Экран до появления вопросов: загрузка, ошибка загрузки или «ты уже
+ * участвовал в розыгрыше». Из любого состояния есть выход: киоск передают из
+ * рук в руки, и без кнопки человек упирается в тупик.
+ */
+export function QuizGateScreen({
+  points,
+  error,
+  locked,
+  onRetry,
+  onLeave,
+}: {
+  points: number;
+  error: string | null;
+  /** Квиз закрыт для участника: повторять загрузку бессмысленно. */
+  locked: boolean;
+  onRetry: () => void;
+  onLeave: () => void;
+}) {
+  return (
+    <QuizScreen points={points}>
+      <p className="mt-16 text-center text-kiosk-base font-medium text-white">
+        {locked ? 'Вы уже приняли участие в розыгрыше' : error ? 'Не удалось загрузить вопросы' : 'Загружаем вопросы…'}
+      </p>
+      {error && (
+        <>
+          <p className="mt-3 text-center text-kiosk-sm font-medium text-white/80">{error}</p>
+          <div className="mt-auto flex flex-col items-center gap-4 pt-10">
+            {!locked && <QuizButton onClick={onRetry}>Попробовать снова</QuizButton>}
+            <QuizButton tone={locked ? 'red' : 'pale'} onClick={onLeave}>
+              К станциям
+            </QuizButton>
+          </div>
+        </>
+      )}
+    </QuizScreen>
+  );
+}
+
 export function ErrorNote({ children }: { children: ReactNode }) {
   return (
     <p

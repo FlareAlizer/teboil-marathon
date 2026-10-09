@@ -13,7 +13,14 @@ import { QUIZ_ACTIVITIES } from './types';
 
    Ничего не стирается безвозвратно — записи переносятся в архив
    deleted_events одной командой с удалением.
+
+   Один человек участвует в розыгрыше один раз в день: кто был в сброшенном
+   рейтинге, в следующий розыгрыш того же дня не попадает (hasPlayedQuizRound).
    ========================================================================== */
+
+/** Текст для участника — один и тот же на сервере и на экране. */
+export const QUIZ_ROUND_PLAYED =
+  'Второй раз участвовать в розыгрыше нельзя. Остальные станции проходить можно — чеканка, дартс и полоса препятствий ждут!';
 
 export interface QuizDayStats {
   day: string;
@@ -23,6 +30,8 @@ export interface QuizDayStats {
   players: number;
   /** Когда рейтинг квизов сбрасывали в последний раз (ISO) — или null. */
   lastResetAt: string | null;
+  /** Сколько человек уже отыграли сегодня в прошлых розыгрышах. */
+  playedBefore: number;
 }
 
 const ACTIVITIES = [...QUIZ_ACTIVITIES] as string[];
@@ -39,6 +48,7 @@ export async function getQuizDayStats(day = todayLocal()): Promise<QuizDayStats>
     events: Number(row?.events ?? 0),
     players: Number(row?.players ?? 0),
     lastResetAt: await readEpoch(),
+    playedBefore: await countPlayedToday(day),
   };
 }
 
@@ -59,6 +69,37 @@ export async function getQuizEpoch(): Promise<string | null> {
   const value = await readEpoch();
   epochCache = { at: Date.now(), value };
   return value;
+}
+
+/**
+ * Участвовал ли человек сегодня в розыгрыше, рейтинг которого уже сбросили.
+ *
+ * Узнаём по архиву: при сбросе его ответы уходят в deleted_events с тем же
+ * временем, что и запись в quiz_resets (одна транзакция — одно now()).
+ * Отменённая оператором запись в это не попадает: у неё другое время.
+ */
+export async function hasPlayedQuizRound(playerId: number, day = todayLocal()): Promise<boolean> {
+  const rows = await sql<{ found: number }>(
+    `SELECT 1 AS found
+       FROM deleted_events d
+       JOIN quiz_resets r ON r.reset_at = d.deleted_at
+      WHERE d.player_id = $1 AND d.event_day = $2 AND d.activity = ANY($3::text[])
+      LIMIT 1`,
+    [playerId, day, ACTIVITIES],
+  );
+  return rows.length > 0;
+}
+
+/** Сколько человек сегодня уже отыграли и в новый розыгрыш не попадут. */
+export async function countPlayedToday(day = todayLocal()): Promise<number> {
+  const [row] = await sql<{ c: string }>(
+    `SELECT COUNT(DISTINCT d.player_id) AS c
+       FROM deleted_events d
+       JOIN quiz_resets r ON r.reset_at = d.deleted_at
+      WHERE d.event_day = $1 AND d.activity = ANY($2::text[])`,
+    [day, ACTIVITIES],
+  );
+  return Number(row?.c ?? 0);
 }
 
 /** Сброс рейтинга квизов за день. Возвращает, сколько записей ушло в архив. */

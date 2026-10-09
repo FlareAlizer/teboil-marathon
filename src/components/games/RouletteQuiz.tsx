@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { QuizVariant } from '@/lib/types';
 import type { WheelSector } from './SpinWheel';
-import { QuizButton, QuizScreen } from './quiz-ui';
+import { QuizGateScreen } from './quiz-ui';
 import { QuizIntroScreen } from './QuizIntroScreen';
 import { LevelPickScreen } from './LevelPickScreen';
 import { WheelScreen } from './WheelScreen';
@@ -83,6 +83,7 @@ export function RouletteQuiz({
   const [quiz, setQuiz] = useState<QuizData | null>(null);
   const [phase, setPhase] = useState<Phase>('loading');
   const [error, setError] = useState<string | null>(null);
+  const [locked, setLocked] = useState(false);
 
   const [level, setLevel] = useState<1 | 2 | 3>(1);
   const [theme, setTheme] = useState<string | null>(null);
@@ -112,6 +113,13 @@ export function RouletteQuiz({
     const started = Date.now();
     try {
       const data = await getQuiz(variant, player.id);
+      // Уже отыграл в сегодняшнем розыгрыше — вопросы не показываем (текст — с сервера).
+      if (data.locked) {
+        clearProgress(player.id, variant);
+        setLocked(true);
+        setError('Второй раз участвовать в розыгрыше нельзя. Остальные станции проходить можно — чеканка, дартс и полоса препятствий ждут!');
+        return;
+      }
       const questions = data.levels.reduce((n, l) => n + l.questions.length, 0);
       trace('quiz_loaded', { variant, questions, answered: data.answeredIds?.length ?? 0, fromCache: data.fromCache ?? false, ms: Date.now() - started });
       themeOrder.current = shuffledOrder(
@@ -332,32 +340,7 @@ export function RouletteQuiz({
   const score = player.todayPoints;
 
   if (!quiz) {
-    // Из состояния ошибки обязательно должен быть выход. Киоск передают из рук
-    // в руки: без кнопки участник упирается в тупик и зовёт волонтёра, а тот
-    // может только перезагрузить страницу.
-    return (
-      <QuizScreen points={score}>
-        <p className="mt-16 text-center text-kiosk-base font-medium text-white">
-          {error ? 'Не удалось загрузить вопросы' : 'Загружаем вопросы…'}
-        </p>
-
-        {error && (
-          <>
-            <p className="mt-3 text-center text-kiosk-sm font-medium text-white/80">
-              {error}
-            </p>
-            <div className="mt-auto flex flex-col items-center gap-4 pt-10">
-              <QuizButton onClick={() => void loadQuiz()}>
-                Попробовать снова
-              </QuizButton>
-              <QuizButton tone="pale" onClick={leave}>
-                К станциям
-              </QuizButton>
-            </div>
-          </>
-        )}
-      </QuizScreen>
-    );
+    return <QuizGateScreen points={score} error={error} locked={locked} onRetry={() => void loadQuiz()} onLeave={leave} />;
   }
 
   const levelPick = (
